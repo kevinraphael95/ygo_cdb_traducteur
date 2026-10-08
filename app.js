@@ -522,7 +522,9 @@ function hasUnsavedChanges() {
 }
 
 function confirmDiscardIfDirty() {
-  if (!hasUnsavedChanges()) return true;
+  // On utilise `dirty` (mis à jour par les vrais inputs utilisateur),
+  // pas hasUnsavedChanges() qui compare avec la carte actuellement filtrée.
+  if (!dirty) return true;
   return confirm('Modifications non enregistrées sur cette carte. Continuer et les perdre ?');
 }
 
