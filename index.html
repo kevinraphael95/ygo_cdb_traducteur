@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VAACT Traducteur</title>
+<title>Traducteur CDB</title>
 <link rel="stylesheet" href="style.css">
 <script>
   (function() {
     try {
-      const saved = localStorage.getItem('vaact-theme');
+      const saved = localStorage.getItem('cdb-translator-theme');
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
     } catch (e) {}
@@ -31,8 +31,8 @@
 <div class="welcome" id="welcomeScreen">
   <button class="btn-theme btn-theme-welcome" id="themeToggleWelcome" title="Thème">🌙</button>
 
-  <div class="welcome-icon">⚔️</div>
-  <h2>VAACT Traducteur</h2>
+  <div class="welcome-icon">📚</div>
+  <h2>Traducteur CDB</h2>
   <p>Choisis ton <strong>deck à traduire</strong>.<br>Et si tu veux continuer une traduction en cours, choisis aussi ton fichier de traduction.</p>
 
   <!-- Deck à traduire (requis) -->
@@ -77,8 +77,8 @@
   <div class="topbar">
     <div class="topbar-inner">
       <div class="logo">
-        <div class="logo-icon">⚔️</div>
-        VAACT Traducteur
+        <div class="logo-icon">📚</div>
+        Traducteur CDB
         <span class="modified-count" id="modifiedCount" style="display:none;" title="Cartes modifiées dans cette session">
           <span id="modifiedCountValue">0</span>
         </span>
@@ -101,7 +101,7 @@
 
             <label class="filter-option">
               <input type="checkbox" id="filterVaact">
-              <span class="label-text">VAACT uniquement</span>
+              <span class="label-text">Cartes modifiées (VAACT)</span>
             </label>
 
             <label class="filter-option">
@@ -162,9 +162,9 @@
           <div class="trans-head">
             <div class="trans-meta">
               <span class="badge-source manual">Traduction éditable</span>
-              <span class="badge-source vaact" id="vaactBadge" style="display:none;">VAACT</span>
+              <span class="badge-source vaact" id="vaactBadge" style="display:none;">Modifiée</span>
               <span class="badge-source missing" id="missingBadge" style="display:none;"></span>
-              <span class="badge-source modified" id="modifiedBadge" style="display:none;">Modifiée</span>
+              <span class="badge-source modified" id="modifiedBadge" style="display:none;">Éditée</span>
             </div>
             <div class="edit-actions">
               <button class="btn-secondary" id="resetCardBtn" title="Revenir à la traduction d'origine">↺ Réinitialiser</button>
