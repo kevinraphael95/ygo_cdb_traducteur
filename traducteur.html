@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VAACT Traducteur</title>
+<link rel="stylesheet" href="style.css">
+<script>
+  (function() {
+    try {
+      const saved = localStorage.getItem('vaact-theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+    } catch (e) {}
+  })();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+</head>
+<body>
+
+<div class="loading-screen" id="loadingScreen" style="display:none;">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Chargement des cartes…</div>
+  </div>
+</div>
+
+<!-- ========================================================================
+     ÉCRAN D'ACCUEIL
+     ======================================================================== -->
+<div class="welcome" id="welcomeScreen">
+  <button class="btn-theme btn-theme-welcome" id="themeToggleWelcome" title="Thème">🌙</button>
+
+  <div class="welcome-icon">⚔️</div>
+  <h2>VAACT Traducteur</h2>
+  <p>Choisis ton <strong>deck à traduire</strong>.<br>Et si tu veux continuer une traduction en cours, choisis aussi ton fichier de traduction.</p>
+
+  <!-- Deck à traduire (requis) -->
+  <div class="file-card" id="cardSource">
+    <div class="file-icon">📄</div>
+    <div class="file-info">
+      <div class="file-title">
+        Deck à traduire
+        <span class="tag required">Requis</span>
+      </div>
+      <div class="file-subtitle" id="subSource">Aucun fichier sélectionné</div>
+    </div>
+    <button class="btn-pick" id="pickSourceBtn">Choisir</button>
+  </div>
+
+  <!-- Traduction existante (optionnel) -->
+  <div class="file-card optional" id="cardTrad">
+    <div class="file-icon">📁</div>
+    <div class="file-info">
+      <div class="file-title">
+        Traduction existante
+        <span class="tag optional">Optionnel</span>
+      </div>
+      <div class="file-subtitle" id="subTrad">Aucun fichier — un nouveau sera créé au 1er enregistrement</div>
+    </div>
+    <button class="btn-pick" id="pickTradBtn">Choisir</button>
+  </div>
+
+  <button class="btn-start" id="startBtn" disabled>Commencer à traduire →</button>
+
+  <div class="privacy-note">
+    <span class="icon">🔒</span>
+    <span>Tes fichiers ne quittent jamais ton ordinateur. Le navigateur les lit et les écrit localement.</span>
+  </div>
+</div>
+
+<!-- ========================================================================
+     APPLICATION
+     ======================================================================== -->
+<div id="appScreen" style="display:none;">
+
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="logo">
+        <div class="logo-icon">⚔️</div>
+        VAACT Traducteur
+        <span class="modified-count" id="modifiedCount" style="display:none;" title="Cartes modifiées dans cette session">
+          <span id="modifiedCountValue">0</span>
+        </span>
+      </div>
+
+      <div class="topbar-center">
+        <div class="search-wrap">
+          <input type="text" class="search-input" id="searchInput" placeholder="Chercher une carte…">
+          <button type="button" class="search-clear" id="searchClear" title="Effacer" aria-label="Effacer">✕</button>
+        </div>
+
+        <div class="filters-anchor">
+          <button class="btn-filters" id="filtersBtn" title="Filtres" aria-label="Filtres">
+            <span class="btn-filters-label">≡ Filtres</span>
+            <span class="badge-count" style="display:none;">0</span>
+          </button>
+
+          <div class="filters-panel" id="filtersPanel">
+            <div class="filters-panel-title">Filtres</div>
+
+            <label class="filter-option">
+              <input type="checkbox" id="filterVaact">
+              <span class="label-text">VAACT uniquement</span>
+            </label>
+
+            <label class="filter-option">
+              <input type="checkbox" id="filterIncomplete">
+              <span class="label-text">⚠️ Incomplètes uniquement</span>
+            </label>
+
+            <div class="filters-sep"></div>
+
+            <div class="filters-panel-title">Filtres personnalisés</div>
+
+            <div class="custom-chips" id="customChips"></div>
+
+            <div class="custom-add-row">
+              <input type="text" id="customKeywordInput" placeholder="Ajouter un mot-clé…">
+              <button type="button" class="btn-add" id="customAddBtn" title="Ajouter" aria-label="Ajouter">＋</button>
+            </div>
+
+            <div class="custom-hint">La carte doit contenir <strong>tous</strong> les mots-clés.</div>
+
+            <button type="button" class="btn-reset" id="filterResetBtn">Tout effacer</button>
+          </div>
+        </div>
+
+        <button class="btn-random" id="randomBtn" title="Carte aléatoire">🎲</button>
+        <button class="btn-theme" id="themeToggle" title="Thème">🌙</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container" id="mainContainer">
+    <div class="main-grid">
+
+      <div class="card-visual">
+        <div class="card-image">
+          <img id="cardImg" alt="">
+        </div>
+        <div class="card-info">
+          <div class="info-row"><span class="label">ID</span><span class="value" id="infoId">—</span></div>
+          <div class="info-row"><span class="label">Type</span><span class="value" id="infoType">—</span></div>
+          <div class="info-row"><span class="label">Attribut</span><span class="value" id="infoAttr">—</span></div>
+          <div class="info-row"><span class="label">ATK / DEF</span><span class="value" id="infoStats">—</span></div>
+          <div class="info-row"><span class="label">Niveau</span><span class="value" id="infoLevel">—</span></div>
+          <div class="info-row"><span class="label">Statut</span><span class="value" id="infoStatus">—</span></div>
+        </div>
+      </div>
+
+      <div class="content-col">
+        <div class="section">
+          <div class="section-title">📖 Texte original</div>
+          <div class="original-box">
+            <div class="original-name" id="origName">—</div>
+            <div class="original-desc" id="origDesc">—</div>
+          </div>
+        </div>
+
+        <div class="translation" id="translationSection">
+          <div class="trans-head">
+            <div class="trans-meta">
+              <span class="badge-source manual">Traduction éditable</span>
+              <span class="badge-source vaact" id="vaactBadge" style="display:none;">VAACT</span>
+              <span class="badge-source missing" id="missingBadge" style="display:none;"></span>
+              <span class="badge-source modified" id="modifiedBadge" style="display:none;">Modifiée</span>
+            </div>
+            <div class="edit-actions">
+              <button class="btn-secondary" id="resetCardBtn" title="Revenir à la traduction d'origine">↺ Réinitialiser</button>
+            </div>
+          </div>
+
+          <label class="edit-label">Nom (traduit)</label>
+          <input type="text" class="edit-input" id="editNameFr">
+
+          <label class="edit-label">Description (traduite)</label>
+          <textarea class="edit-textarea" id="editDescFr"></textarea>
+
+          <div class="edit-footer">
+            <span class="save-status" id="saveStatus"></span>
+            <button class="btn-primary" id="saveBtn" title="Ctrl+S">💾 Enregistrer</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">🗂️ Fichier de sauvegarde</div>
+          <div class="global-actions">
+            <span class="save-status" id="globalStatus"></span>
+          </div>
+          <p style="font-size:12px;color:#888;margin-top:8px;line-height:1.5;">
+            Le bouton <strong>💾 Enregistrer</strong> (ou <kbd>Ctrl</kbd>+<kbd>S</kbd>) écrit <strong>directement</strong>
+            dans ton fichier de traduction.<br>
+            Si tu n'en as pas fourni au démarrage, une fenêtre te proposera d'en <strong>créer un nouveau</strong> au 1er enregistrement.<br>
+            <em>Nécessite Chrome, Edge ou Opera.</em>
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="nav-bar" id="navBar">
+    <div class="nav-inner">
+      <button class="nav-btn" id="prevBtn">← Précédent</button>
+      <span class="nav-center" id="navCenter">1 / 1</span>
+      <button class="nav-btn" id="nextBtn">Suivant →</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
