@@ -1,4 +1,18 @@
 // ============================================================================
+// Traducteur CDB — Logique applicative
+// ----------------------------------------------------------------------------
+// Éditeur de fichiers .cdb (SQLite) pour jeux Yu-Gi-Oh!
+//   • Chargement des fichiers par l'utilisateur (aucun upload serveur)
+//   • Édition des traductions (nom + description)
+//   • Écriture directe dans le .cdb via File System Access API
+//   • Filtres : cartes taguées, incomplètes, mots-clés personnalisés
+//   • Badges auto [XXX] détectés dans les descriptions
+// ----------------------------------------------------------------------------
+// Dépendances : sql.js 1.10.3 (CDN)
+// Navigateurs : Chrome, Edge, Opera
+// ============================================================================
+
+// ============================================================================
 // ÉTAT
 // ============================================================================
 let CARDS = [];
