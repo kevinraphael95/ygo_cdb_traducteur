@@ -10,7 +10,7 @@ let tradFileHandle = null;      // traduction existante (optionnel)
 let tradFileName = '';
 let supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 let customKeywords = [];
-const CUSTOM_KEYWORDS_LS = 'vaact-custom-keywords';
+const CUSTOM_KEYWORDS_LS = 'cdb-translator-keywords';
 
 (function restoreCustomKeywords() {
   try {
@@ -57,9 +57,45 @@ function normalizeNewlines(s) {
 }
 
 // ============================================================================
+// TAGS AUTO — détecte [XXX] dans les descriptions
+// ============================================================================
+function extractTags(descFr) {
+  if (!descFr) return [];
+  const matches = descFr.match(/\[([A-Z0-9_-]+)\]/gi);
+  if (!matches) return [];
+  const seen = new Set();
+  const tags = [];
+  for (const m of matches) {
+    const tag = m.slice(1, -1).toUpperCase();
+    if (!seen.has(tag)) { seen.add(tag); tags.push(tag); }
+  }
+  return tags;
+}
+
+function tagHue(tag) {
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) % 360;
+  return h;
+}
+
+function renderTags(descFr) {
+  const container = document.getElementById('transTags');
+  if (!container) return;
+  const tags = extractTags(descFr);
+  if (!tags.length) { container.innerHTML = ''; return; }
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  container.innerHTML = tags.map(tag => {
+    const h = tagHue(tag);
+    const bg = isDark ? `hsla(${h}, 60%, 40%, 0.18)` : `hsl(${h}, 70%, 92%)`;
+    const fg = isDark ? `hsl(${h}, 70%, 70%)` : `hsl(${h}, 65%, 32%)`;
+    return `<span class="tag-badge" style="background:${bg};color:${fg}">[${esc(tag)}]</span>`;
+  }).join('');
+}
+
+// ============================================================================
 // FILTRES
 // ============================================================================
-function isVaactCard(card) { return (card.desc_fr || '').trim().startsWith('(VAACT'); }
+function isTaggedCard(card) { return extractTags(card.desc_fr).length > 0; }
 function isIncompleteCard(card) { return card.missingFr === true || card.missingEn === true; }
 
 function getFilterState() {
@@ -76,7 +112,7 @@ function countActiveFilters() {
 function getFilteredCards() {
   let list = CARDS;
   const { vaact, incomplete, keywords } = getFilterState();
-  if (vaact) list = list.filter(isVaactCard);
+  if (vaact) list = list.filter(isTaggedCard);
   if (incomplete) list = list.filter(isIncompleteCard);
   if (keywords.length) {
     list = list.filter(c => {
@@ -150,7 +186,6 @@ async function loadCardImage(card) {
 // SÉLECTION DES FICHIERS PAR L'UTILISATEUR
 // ============================================================================
 async function pickCdb(type) {
-  // type = 'source' ou 'trad'
   if (!supportsFS) {
     alert('Ton navigateur ne supporte pas la sélection de fichiers. Utilise Chrome, Edge ou Opera.');
     return;
@@ -218,13 +253,11 @@ async function startApp() {
     const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
     window.SQL = SQL;
 
-    // Charger le deck à traduire
     lt.textContent = 'Lecture du deck à traduire…';
     const sourceFile = await sourceFileHandle.getFile();
     const sourceBuf = await sourceFile.arrayBuffer();
     const sourceDb = new SQL.Database(new Uint8Array(sourceBuf));
 
-    // Charger la traduction si fournie, sinon créer une base vide
     if (tradFileHandle) {
       lt.textContent = 'Lecture de la traduction existante…';
       const tradFile = await tradFileHandle.getFile();
@@ -348,15 +381,13 @@ function mergeCards(sourceCards, tradCards) {
   }
 
   if (sourceOnly.length) {
-    console.warn(`⚠️ ${sourceOnly.length} carte(s) sans traduction :`);
-    console.table(sourceOnly.slice(0, 20));
+    console.warn(`⚠️ ${sourceOnly.length} carte(s) sans traduction`);
   }
   if (tradOnly.length) {
-    console.warn(`⚠️ ${tradOnly.length} carte(s) traduites sans original :`);
-    console.table(tradOnly.slice(0, 20));
+    console.warn(`⚠️ ${tradOnly.length} carte(s) traduites sans original`);
   }
   if (!sourceOnly.length && !tradOnly.length && Object.keys(sourceCards).length && Object.keys(tradCards).length) {
-    console.log('✅ Aucune carte orpheline — les deux fichiers sont synchronisés.');
+    console.log('✅ Aucune carte orpheline');
   }
 
   result.sort((a, b) => parseInt(a.id) - parseInt(b.id));
@@ -370,14 +401,41 @@ function render() {
   if (!CARDS.length) return;
   const filtered = getFilteredCards();
 
+  // Aucune carte ne correspond aux filtres
   if (!filtered.length) {
-    document.getElementById('translationSection').innerHTML =
-      `<div class="no-comments">Aucune carte ne correspond aux filtres actifs.</div>`;
+    document.getElementById('infoId').textContent = '—';
+    document.getElementById('infoType').textContent = '—';
+    document.getElementById('infoAttr').textContent = '—';
+    document.getElementById('infoStats').textContent = '—';
+    document.getElementById('infoLevel').textContent = '—';
+    document.getElementById('infoStatus').textContent = 'Aucune carte';
+    document.getElementById('origName').textContent = '—';
+    document.getElementById('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
+
+    const nameEl = document.getElementById('editNameFr');
+    const descEl = document.getElementById('editDescFr');
+    if (nameEl) { nameEl.value = ''; nameEl.disabled = true; }
+    if (descEl) { descEl.value = ''; descEl.disabled = true; }
+
+    const tagsEl = document.getElementById('transTags');
+    if (tagsEl) tagsEl.innerHTML = '';
+    const mb = document.getElementById('missingBadge');
+    if (mb) mb.style.display = 'none';
+    const modb = document.getElementById('modifiedBadge');
+    if (modb) modb.style.display = 'none';
+
     document.getElementById('navCenter').textContent = '0 / 0';
     document.getElementById('prevBtn').disabled = true;
     document.getElementById('nextBtn').disabled = true;
     return;
   }
+
+  // Réactive les champs si besoin
+  const nameEl = document.getElementById('editNameFr');
+  const descEl = document.getElementById('editDescFr');
+  if (nameEl) nameEl.disabled = false;
+  if (descEl) descEl.disabled = false;
+
   if (currentIndex >= filtered.length) currentIndex = 0;
   const card = filtered[currentIndex];
 
@@ -399,7 +457,7 @@ function render() {
   document.getElementById('editNameFr').value = card.name_fr || '';
   document.getElementById('editDescFr').value = card.desc_fr || '';
 
-  document.getElementById('vaactBadge').style.display = isVaactCard(card) ? '' : 'none';
+  renderTags(card.desc_fr);
   document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
 
   const mb = document.getElementById('missingBadge');
@@ -448,11 +506,17 @@ function updateModifiedCount() {
 }
 
 function hasUnsavedChanges() {
+  const nameEl = document.getElementById('editNameFr');
+  const descEl = document.getElementById('editDescFr');
+  if (!nameEl || !descEl) return false;
+
   const f = getFilteredCards();
   const card = f[currentIndex];
   if (!card) return false;
-  const name = document.getElementById('editNameFr').value;
-  const desc = document.getElementById('editDescFr').value;
+
+  const name = nameEl.value;
+  const desc = descEl.value;
+
   return name !== (card.name_fr || '')
       || normalizeNewlines(desc) !== normalizeNewlines(card.desc_fr);
 }
@@ -466,7 +530,6 @@ function confirmDiscardIfDirty() {
 // ÉCRITURE DANS LE .CDB
 // ============================================================================
 async function ensureFileHandle() {
-  // Cas 1 : trad déjà chargée → demander la permission
   if (tradFileHandle) {
     const perm = await tradFileHandle.queryPermission({ mode: 'readwrite' });
     if (perm === 'granted') return true;
@@ -474,7 +537,6 @@ async function ensureFileHandle() {
     return req === 'granted';
   }
 
-  // Cas 2 : pas de trad → demander où créer le nouveau fichier
   try {
     const h = await window.showSaveFilePicker({
       suggestedName: 'VAACT_S1_fr.cdb',
@@ -567,8 +629,8 @@ async function saveCurrentCard() {
     return;
   }
 
+  renderTags(card.desc_fr);
   document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
-  document.getElementById('vaactBadge').style.display = isVaactCard(card) ? '' : 'none';
 
   const mb = document.getElementById('missingBadge');
   if (mb) {
@@ -671,7 +733,7 @@ if (filtersBtn && filtersPanel) {
 }
 
 // ============================================================================
-// CHECKBOXES VAACT + Incomplètes
+// CHECKBOXES FILTRES
 // ============================================================================
 ['filterVaact', 'filterIncomplete'].forEach(id => {
   const el = document.getElementById(id);
@@ -845,7 +907,7 @@ function esc(s) {
 // ============================================================================
 // THÈME
 // ============================================================================
-const THEME_KEY = 'vaact-theme';
+const THEME_KEY = 'cdb-translator-theme';
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
@@ -861,6 +923,9 @@ function toggleTheme() {
   const next = cur === 'dark' ? 'light' : 'dark';
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
+
+  const card = getFilteredCards()[currentIndex];
+  if (card) renderTags(card.desc_fr);
 }
 
 document.getElementById('themeToggle').addEventListener('click', toggleTheme);
@@ -873,7 +938,7 @@ if (themeToggleWelcome) {
 applyTheme(localStorage.getItem(THEME_KEY) || 'light');
 
 // ============================================================================
-// INIT — boutons de l'écran d'accueil
+// INIT
 // ============================================================================
 document.getElementById('pickSourceBtn').addEventListener('click', () => pickCdb('source'));
 document.getElementById('pickTradBtn').addEventListener('click', () => pickCdb('trad'));
