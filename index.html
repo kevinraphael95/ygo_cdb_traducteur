@@ -25,9 +25,6 @@
   </div>
 </div>
 
-<!-- ========================================================================
-     ÉCRAN D'ACCUEIL
-     ======================================================================== -->
 <div class="welcome" id="welcomeScreen">
   <button class="btn-theme btn-theme-welcome" id="themeToggleWelcome" title="Thème">🌙</button>
 
@@ -35,7 +32,6 @@
   <h2>Traducteur CDB</h2>
   <p>Choisis ton <strong>deck à traduire</strong>.<br>Et si tu veux continuer une traduction en cours, choisis aussi ton fichier de traduction.</p>
 
-  <!-- Deck à traduire (requis) -->
   <div class="file-card" id="cardSource">
     <div class="file-icon">📄</div>
     <div class="file-info">
@@ -48,7 +44,6 @@
     <button class="btn-pick" id="pickSourceBtn">Choisir</button>
   </div>
 
-  <!-- Traduction existante (optionnel) -->
   <div class="file-card optional" id="cardTrad">
     <div class="file-icon">📁</div>
     <div class="file-info">
@@ -69,9 +64,6 @@
   </div>
 </div>
 
-<!-- ========================================================================
-     APPLICATION
-     ======================================================================== -->
 <div id="appScreen" style="display:none;">
 
   <div class="topbar">
@@ -101,7 +93,7 @@
 
             <label class="filter-option">
               <input type="checkbox" id="filterVaact">
-              <span class="label-text">Cartes modifiées (VAACT)</span>
+              <span class="label-text">Cartes taguées</span>
             </label>
 
             <label class="filter-option">
@@ -162,7 +154,7 @@
           <div class="trans-head">
             <div class="trans-meta">
               <span class="badge-source manual">Traduction éditable</span>
-              <span class="badge-source vaact" id="vaactBadge" style="display:none;">Modifiée</span>
+              <span class="trans-tags" id="transTags"></span>
               <span class="badge-source missing" id="missingBadge" style="display:none;"></span>
               <span class="badge-source modified" id="modifiedBadge" style="display:none;">Éditée</span>
             </div>
