@@ -38,7 +38,7 @@ body {
 .loading-text { color: #666; font-size: 14px; font-weight: 500; }
 
 /* ============================================================================
-   ÉCRAN D'ACCUEIL — SÉLECTION DES FICHIERS
+   ÉCRAN D'ACCUEIL
    ============================================================================ */
 .welcome {
   min-height: 100vh;
@@ -58,12 +58,8 @@ body {
   font-size: 40px; color: #fff;
   box-shadow: 0 8px 24px rgba(74, 127, 214, 0.35);
 }
-.welcome h2 {
-  font-size: 24px; font-weight: 700; color: #1a1a1a;
-}
-.welcome p {
-  font-size: 14px; color: #666; max-width: 480px;
-}
+.welcome h2 { font-size: 24px; font-weight: 700; color: #1a1a1a; }
+.welcome p { font-size: 14px; color: #666; max-width: 480px; }
 .welcome p code {
   background: #e8f0fa;
   color: #2a5aa8;
@@ -73,7 +69,6 @@ body {
   font-size: 12px;
 }
 
-/* Bouton thème flottant sur l'écran d'accueil */
 .btn-theme-welcome {
   position: fixed;
   top: 20px;
@@ -81,7 +76,6 @@ body {
   z-index: 100;
 }
 
-/* Cartes de sélection de fichier */
 .file-card {
   width: 100%; max-width: 480px;
   background: #fff;
@@ -92,10 +86,7 @@ body {
   text-align: left;
   transition: all 0.2s;
 }
-.file-card.picked {
-  border-color: #4a7fd6;
-  background: #f0f6fd;
-}
+.file-card.picked { border-color: #4a7fd6; background: #f0f6fd; }
 .file-card.optional { border-style: dashed; }
 .file-icon {
   width: 44px; height: 44px;
@@ -660,11 +651,7 @@ body {
   margin-bottom: 12px;
 }
 
-.original-box {
-  padding: 0;
-  background: transparent;
-  border: none;
-}
+.original-box { padding: 0; background: transparent; border: none; }
 .original-name {
   font-size: 16px;
   font-weight: 700;
@@ -705,7 +692,6 @@ body {
   letter-spacing: 0.5px;
 }
 .badge-source.manual { background: #e8f0fa; color: #2a5aa8; }
-.badge-source.vaact { background: #fff0d4; color: #b07000; }
 .badge-source.modified {
   background: #fff4d4;
   color: #8a6a00;
@@ -753,6 +739,14 @@ body {
   box-shadow: 0 0 0 3px rgba(74, 127, 214, 0.15);
 }
 
+/* Champs désactivés (aucun résultat de filtre) */
+.edit-input:disabled,
+.edit-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f0f2f5;
+}
+
 .edit-footer {
   display: flex;
   justify-content: space-between;
@@ -765,6 +759,26 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: #2a8a4a;
+}
+
+/* ============================================================================
+   TAGS AUTO — badges [XXX] colorés
+   ============================================================================ */
+.trans-tags {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.tag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  font-family: 'SF Mono', monospace;
 }
 
 /* ============================================================================
@@ -870,7 +884,6 @@ body {
 @media (max-width: 800px) {
   body { padding-bottom: 90px; }
 
-  /* Écran d'accueil mobile */
   .welcome { padding: 32px 16px; gap: 16px; }
   .welcome-icon { width: 64px; height: 64px; font-size: 32px; border-radius: 16px; }
   .welcome h2 { font-size: 20px; }
@@ -883,10 +896,7 @@ body {
   .btn-start { padding: 12px 24px; font-size: 14px; }
   .privacy-note { font-size: 11px; padding: 8px 12px; }
 
-  .main-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
+  .main-grid { grid-template-columns: 1fr; gap: 16px; }
 
   .card-visual {
     position: static;
@@ -897,7 +907,6 @@ body {
     gap: 14px;
     align-items: flex-start;
   }
-
   .card-image {
     width: 140px;
     height: 140px;
@@ -912,54 +921,25 @@ body {
   .info-row .label { font-size: 9px; }
   .info-row .value { font-size: 11px; }
 
-  .section,
-  .translation { padding: 14px; }
-
+  .section, .translation { padding: 14px; }
   .section-title { margin-bottom: 10px; }
   .original-name { font-size: 15px; }
   .original-desc { font-size: 12px; }
-  .edit-input,
-  .edit-textarea { font-size: 13px; }
+  .edit-input, .edit-textarea { font-size: 13px; }
   .edit-textarea { min-height: 120px; }
 
   .topbar { padding: 10px 0; }
-  .topbar-inner {
-    padding: 0 12px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
+  .topbar-inner { padding: 0 12px; flex-wrap: wrap; gap: 10px; }
   .logo { font-size: 16px; }
   .logo-icon { width: 28px; height: 28px; font-size: 14px; }
-  .topbar-center {
-    max-width: none;
-    width: 100%;
-    order: 3;
-    gap: 6px;
-  }
+  .topbar-center { max-width: none; width: 100%; order: 3; gap: 6px; }
 
-  .search-wrap {
-    flex: 1;
-    min-width: 0;
-    max-width: none;
-  }
-  .search-input {
-    font-size: 13px;
-    padding: 8px 30px 8px 10px;
-  }
-  .search-clear {
-    width: 20px;
-    height: 20px;
-    font-size: 10px;
-    right: 5px;
-  }
+  .search-wrap { flex: 1; min-width: 0; max-width: none; }
+  .search-input { font-size: 13px; padding: 8px 30px 8px 10px; }
+  .search-clear { width: 20px; height: 20px; font-size: 10px; right: 5px; }
 
   .filters-anchor { position: static; }
-  .btn-filters {
-    width: 38px;
-    height: 38px;
-    padding: 0;
-    gap: 0;
-  }
+  .btn-filters { width: 38px; height: 38px; padding: 0; gap: 0; }
   .btn-filters .badge-count {
     position: absolute;
     top: -4px;
@@ -979,12 +959,7 @@ body {
     max-height: calc(100vh - 80px);
   }
 
-  .btn-random,
-  .btn-theme {
-    width: 38px;
-    height: 38px;
-    font-size: 15px;
-  }
+  .btn-random, .btn-theme { width: 38px; height: 38px; font-size: 15px; }
 
   .container { padding: 0 12px; margin: 16px auto; }
 
@@ -1022,7 +997,6 @@ body {
   color: #e4e4ea;
 }
 
-/* Écran d'accueil en dark */
 [data-theme="dark"] .welcome h2 { color: #e4e4ea; }
 [data-theme="dark"] .welcome p { color: #c0c0d0; }
 [data-theme="dark"] .welcome p code {
@@ -1217,17 +1191,12 @@ body {
 [data-theme="dark"] .info-row .value { color: #e4e4ea; }
 
 [data-theme="dark"] .section-title { color: #5a5a70; }
-
 [data-theme="dark"] .original-name { color: #e4e4ea; }
 [data-theme="dark"] .original-desc { color: #c0c0d0; }
 
 [data-theme="dark"] .badge-source.manual {
   background: rgba(90, 143, 230, 0.15);
   color: #7aa8e8;
-}
-[data-theme="dark"] .badge-source.vaact {
-  background: rgba(200, 140, 30, 0.18);
-  color: #e0a850;
 }
 [data-theme="dark"] .badge-source.modified {
   background: rgba(200, 160, 30, 0.18);
@@ -1252,6 +1221,10 @@ body {
 [data-theme="dark"] .edit-textarea:focus {
   background: #1e1e28;
   border-color: #5a8fe6;
+}
+[data-theme="dark"] .edit-input:disabled,
+[data-theme="dark"] .edit-textarea:disabled {
+  background: #1a1a24;
 }
 [data-theme="dark"] .save-status { color: #6ac48a; }
 
