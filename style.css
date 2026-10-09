@@ -204,6 +204,7 @@ body.has-nav { padding-bottom: 80px; }
   gap: 8px;
   flex-shrink: 0;
 }
+.logo-text { white-space: nowrap; }
 .logo-icon {
   width: 32px;
   height: 32px;
@@ -984,13 +985,31 @@ kbd {
   .edit-input, .edit-textarea { font-size: 13px; }
   .edit-textarea { min-height: 120px; }
 
+  /* --- TOPBAR MOBILE ---
+     On cache le texte du logo pour libérer de la place.
+     Le groupe de contrôles se met sur 2 lignes : la recherche prend
+     toute la largeur en haut, les 3 boutons passent en dessous. */
   .topbar { padding: 10px 0; }
   .topbar-inner { padding: 0 12px; flex-wrap: wrap; gap: 10px; }
   .logo { font-size: 16px; }
   .logo-icon { width: 28px; height: 28px; font-size: 14px; }
-  .topbar-center { max-width: none; width: 100%; order: 3; gap: 6px; }
+  .logo-text { display: none; }
 
-  .search-wrap { flex: 1; min-width: 0; max-width: none; }
+  .topbar-center {
+    max-width: none;
+    width: 100%;
+    order: 3;
+    gap: 6px;
+    flex-wrap: wrap;   /* permet à la recherche de forcer sa propre ligne */
+  }
+
+  /* La recherche prend TOUTE la largeur sur sa propre ligne (flex-basis 100%
+   * + grow) ; les 3 boutons se replient en dessous. */
+  .search-wrap {
+    flex: 1 0 100%;
+    min-width: 0;
+    max-width: none;
+  }
   .search-input { font-size: 13px; padding: 8px 30px 8px 10px; }
   .search-clear { width: 20px; height: 20px; font-size: 10px; right: 5px; }
 
