@@ -11,14 +11,23 @@
    ============================================================================ */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+:root {
+  /* Hauteur de la topbar, recalculée en JS au resize (utile pour le panneau
+   * filtres en mobile). */
+  --topbar-height: 60px;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #eef0f4;
   color: #1a1a1a;
   font-size: 14px;
   line-height: 1.5;
-  padding-bottom: 80px;
 }
+
+/* Le padding-bottom (place pour la nav-bar fixe) n'est appliqué QUE quand
+ * la nav-bar est visible. Sur l'écran d'accueil, elle ne l'est pas. */
+body.has-nav { padding-bottom: 80px; }
 
 /* ============================================================================
    LOADING
@@ -44,6 +53,10 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { color: #666; font-size: 14px; font-weight: 500; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; border-top-color: #d0d5dc; }
+}
 
 /* ============================================================================
    ÉCRAN D'ACCUEIL
@@ -244,6 +257,7 @@ body {
   font-size: 14px;
   font-family: inherit;
   background: #f7f8fa;
+  color: inherit;
 }
 .search-input:focus {
   outline: none;
@@ -282,7 +296,11 @@ body {
   flex-shrink: 0;
 }
 
+/* `position: relative` sur le bouton lui-même permet au badge (position:
+ * absolute sur mobile) de se caler sur SES coins. Sans ça, le badge se
+ * colle en haut à droite de la topbar. */
 .btn-filters {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -420,7 +438,6 @@ body {
   margin: 4px 0;
 }
 
-/* Chips de filtres personnalisés */
 .custom-chips {
   display: flex;
   flex-wrap: wrap;
@@ -479,6 +496,7 @@ body {
   font-size: 13px;
   font-family: inherit;
   background: #f7f8fa;
+  color: inherit;
 }
 .custom-add-row input:focus {
   outline: none;
@@ -590,7 +608,6 @@ body {
   position: sticky;
   top: 90px;
 }
-
 .card-image {
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -610,6 +627,18 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Placeholder visible tant que l'image n'est pas chargée (ou en cas de 404). */
+.img-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  color: #555;
+  pointer-events: none;
 }
 
 .card-info { display: flex; flex-direction: column; gap: 6px; }
@@ -633,7 +662,7 @@ body {
 .info-row .value {
   color: #1a1a1a;
   font-weight: 600;
-  font-family: 'SF Mono', monospace;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
   text-align: right;
 }
 
@@ -747,7 +776,6 @@ body {
   box-shadow: 0 0 0 3px rgba(74, 127, 214, 0.15);
 }
 
-/* Champs désactivés (aucun résultat de filtre) */
 .edit-input:disabled,
 .edit-textarea:disabled {
   opacity: 0.5;
@@ -763,11 +791,13 @@ body {
   gap: 12px;
 }
 
+/* Statuts de sauvegarde : couleurs par classes (s'adaptent au thème). */
 .save-status {
   font-size: 12px;
   font-weight: 600;
   color: #2a8a4a;
 }
+.save-status.is-error { color: #a82a2a; }
 
 /* ============================================================================
    TAGS AUTO — badges [XXX] colorés
@@ -786,7 +816,7 @@ body {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  font-family: 'SF Mono', monospace;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
 }
 
 /* ============================================================================
@@ -797,6 +827,23 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* ============================================================================
+   KBD (raccourci clavier dans le texte d'aide)
+   ============================================================================ */
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #555;
+  background: #f7f8fa;
+  border: 1px solid #d0d5dc;
+  border-bottom-width: 2px;
+  border-radius: 4px;
 }
 
 /* ============================================================================
@@ -844,6 +891,7 @@ body {
   background: #fff;
   border-top: 1px solid #e0e4e8;
   padding: 12px 20px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 20;
   box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
 }
@@ -890,7 +938,7 @@ body {
 }
 
 @media (max-width: 800px) {
-  body { padding-bottom: 90px; }
+  body.has-nav { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
 
   .welcome { padding: 32px 16px; gap: 16px; }
   .welcome-icon { width: 64px; height: 64px; font-size: 32px; border-radius: 16px; }
@@ -958,20 +1006,21 @@ body {
     font-size: 9px;
     margin: 0;
   }
+  /* Ancre le panneau filtres sous la topbar, en lisant sa hauteur réelle. */
   .filters-panel {
     position: fixed;
-    top: 60px;
+    top: calc(var(--topbar-height, 60px) + 8px);
     right: 10px;
     left: 10px;
     width: auto;
-    max-height: calc(100vh - 80px);
+    max-height: calc(100vh - var(--topbar-height, 60px) - 24px);
   }
 
   .btn-random, .btn-theme { width: 38px; height: 38px; font-size: 15px; }
 
   .container { padding: 0 12px; margin: 16px auto; }
 
-  .nav-bar { padding: 10px 12px; }
+  .nav-bar { padding: 10px 12px; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
   .nav-btn { padding: 9px 14px; font-size: 12px; }
   .nav-center { font-size: 12px; }
 
@@ -1235,6 +1284,14 @@ body {
   background: #1a1a24;
 }
 [data-theme="dark"] .save-status { color: #6ac48a; }
+[data-theme="dark"] .save-status.is-error { color: #e07a6a; }
+
+[data-theme="dark"] kbd {
+  background: #252530;
+  border-color: #2e2e3c;
+  border-bottom-color: #3a3a4c;
+  color: #aaa;
+}
 
 [data-theme="dark"] .btn-secondary {
   background: #252530;
