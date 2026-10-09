@@ -233,11 +233,12 @@ body.has-nav { padding-bottom: 80px; }
   font-weight: 700;
 }
 
+/* Groupe de contrôles à droite : la recherche prend tout l'espace
+ * disponible (flex: 1 + min-width: 0), les 3 boutons gardent leur taille. */
 .topbar-center {
   flex: 1;
   display: flex;
   gap: 8px;
-  max-width: 700px;
   align-items: center;
   justify-content: flex-end;
 }
@@ -246,7 +247,6 @@ body.has-nav { padding-bottom: 80px; }
 .search-wrap {
   flex: 1;
   min-width: 120px;
-  max-width: 380px;
   position: relative;
   display: flex;
 }
@@ -987,8 +987,7 @@ kbd {
 
   /* --- TOPBAR MOBILE ---
      On cache le texte du logo pour libérer de la place.
-     Le groupe de contrôles se met sur 2 lignes : la recherche prend
-     toute la largeur en haut, les 3 boutons passent en dessous. */
+     Le groupe de contrôles passe sur sa propre ligne (recherche + 3 boutons). */
   .topbar { padding: 10px 0; }
   .topbar-inner { padding: 0 12px; flex-wrap: wrap; gap: 10px; }
   .logo { font-size: 16px; }
@@ -1000,13 +999,12 @@ kbd {
     width: 100%;
     order: 3;
     gap: 6px;
-    flex-wrap: wrap;   /* permet à la recherche de forcer sa propre ligne */
   }
 
-  /* La recherche prend TOUTE la largeur sur sa propre ligne (flex-basis 100%
-   * + grow) ; les 3 boutons se replient en dessous. */
+  /* La recherche prend tout l'espace libre de la ligne, les 3 boutons
+   * restent à droite avec leur taille fixe. */
   .search-wrap {
-    flex: 1 0 100%;
+    flex: 1;
     min-width: 0;
     max-width: none;
   }
