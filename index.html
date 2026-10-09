@@ -18,9 +18,9 @@
 </head>
 <body>
 
-<div class="loading-screen" id="loadingScreen" style="display:none;">
+<div class="loading-screen" id="loadingScreen" style="display:none;" role="status" aria-live="polite">
   <div class="loading-box">
-    <div class="spinner"></div>
+    <div class="spinner" aria-hidden="true"></div>
     <div class="loading-text" id="loadingText">Chargement des cartes…</div>
   </div>
 </div>
@@ -28,12 +28,12 @@
 <div class="welcome" id="welcomeScreen">
   <button class="btn-theme btn-theme-welcome" id="themeToggleWelcome" title="Thème">🌙</button>
 
-  <div class="welcome-icon">📚</div>
+  <div class="welcome-icon" aria-hidden="true">📚</div>
   <h2>Traducteur CDB</h2>
   <p>Choisis ton <strong>deck à traduire</strong>.<br>Et si tu veux continuer une traduction en cours, choisis aussi ton fichier de traduction.</p>
 
   <div class="file-card" id="cardSource">
-    <div class="file-icon">📄</div>
+    <div class="file-icon" aria-hidden="true">📄</div>
     <div class="file-info">
       <div class="file-title">
         Deck à traduire
@@ -41,11 +41,11 @@
       </div>
       <div class="file-subtitle" id="subSource">Aucun fichier sélectionné</div>
     </div>
-    <button class="btn-pick" id="pickSourceBtn">Choisir</button>
+    <button class="btn-pick" id="pickSourceBtn" type="button">Choisir</button>
   </div>
 
   <div class="file-card optional" id="cardTrad">
-    <div class="file-icon">📁</div>
+    <div class="file-icon" aria-hidden="true">📁</div>
     <div class="file-info">
       <div class="file-title">
         Traduction existante
@@ -53,13 +53,13 @@
       </div>
       <div class="file-subtitle" id="subTrad">Aucun fichier — un nouveau sera créé au 1er enregistrement</div>
     </div>
-    <button class="btn-pick" id="pickTradBtn">Choisir</button>
+    <button class="btn-pick" id="pickTradBtn" type="button">Choisir</button>
   </div>
 
-  <button class="btn-start" id="startBtn" disabled>Commencer à traduire →</button>
+  <button class="btn-start" id="startBtn" type="button" disabled>Commencer à traduire →</button>
 
   <div class="privacy-note">
-    <span class="icon">🔒</span>
+    <span class="icon" aria-hidden="true">🔒</span>
     <span>Tes fichiers ne quittent jamais ton ordinateur. Le navigateur les lit et les écrit localement.</span>
   </div>
 </div>
@@ -69,7 +69,7 @@
   <div class="topbar">
     <div class="topbar-inner">
       <div class="logo">
-        <div class="logo-icon">📚</div>
+        <div class="logo-icon" aria-hidden="true">📚</div>
         Traducteur CDB
         <span class="modified-count" id="modifiedCount" style="display:none;" title="Cartes modifiées dans cette session">
           <span id="modifiedCountValue">0</span>
@@ -78,12 +78,12 @@
 
       <div class="topbar-center">
         <div class="search-wrap">
-          <input type="text" class="search-input" id="searchInput" placeholder="Chercher une carte…">
-          <button type="button" class="search-clear" id="searchClear" title="Effacer" aria-label="Effacer">✕</button>
+          <input type="search" class="search-input" id="searchInput" placeholder="Chercher une carte…" autocomplete="off" aria-label="Rechercher une carte">
+          <button type="button" class="search-clear" id="searchClear" title="Effacer" aria-label="Effacer la recherche">✕</button>
         </div>
 
         <div class="filters-anchor">
-          <button class="btn-filters" id="filtersBtn" title="Filtres" aria-label="Filtres">
+          <button class="btn-filters" id="filtersBtn" type="button" title="Filtres" aria-label="Filtres" aria-expanded="false">
             <span class="btn-filters-label">≡ Filtres</span>
             <span class="badge-count" style="display:none;">0</span>
           </button>
@@ -108,7 +108,7 @@
             <div class="custom-chips" id="customChips"></div>
 
             <div class="custom-add-row">
-              <input type="text" id="customKeywordInput" placeholder="Ajouter un mot-clé…">
+              <input type="text" id="customKeywordInput" placeholder="Ajouter un mot-clé…" autocomplete="off" aria-label="Ajouter un mot-clé">
               <button type="button" class="btn-add" id="customAddBtn" title="Ajouter" aria-label="Ajouter">＋</button>
             </div>
 
@@ -118,8 +118,8 @@
           </div>
         </div>
 
-        <button class="btn-random" id="randomBtn" title="Carte aléatoire">🎲</button>
-        <button class="btn-theme" id="themeToggle" title="Thème">🌙</button>
+        <button class="btn-random" id="randomBtn" type="button" title="Carte aléatoire" aria-label="Carte aléatoire">🎲</button>
+        <button class="btn-theme" id="themeToggle" type="button" title="Thème" aria-label="Basculer le thème clair / sombre">🌙</button>
       </div>
     </div>
   </div>
@@ -145,7 +145,7 @@
         <div class="section">
           <div class="section-title">📖 Texte original</div>
           <div class="original-box">
-            <div class="original-name" id="origName">—</div>
+            <div class="original-name" id="origName" aria-live="polite">—</div>
             <div class="original-desc" id="origDesc">—</div>
           </div>
         </div>
@@ -159,26 +159,26 @@
               <span class="badge-source modified" id="modifiedBadge" style="display:none;">Éditée</span>
             </div>
             <div class="edit-actions">
-              <button class="btn-secondary" id="resetCardBtn" title="Revenir à la traduction d'origine">↺ Réinitialiser</button>
+              <button class="btn-secondary" id="resetCardBtn" type="button" title="Revenir à la traduction d'origine">↺ Réinitialiser</button>
             </div>
           </div>
 
-          <label class="edit-label">Nom (traduit)</label>
-          <input type="text" class="edit-input" id="editNameFr">
+          <label class="edit-label" for="editNameFr">Nom (traduit)</label>
+          <input type="text" class="edit-input" id="editNameFr" autocomplete="off">
 
-          <label class="edit-label">Description (traduite)</label>
+          <label class="edit-label" for="editDescFr">Description (traduite)</label>
           <textarea class="edit-textarea" id="editDescFr"></textarea>
 
           <div class="edit-footer">
-            <span class="save-status" id="saveStatus"></span>
-            <button class="btn-primary" id="saveBtn" title="Ctrl+S">💾 Enregistrer</button>
+            <span class="save-status" id="saveStatus" role="status" aria-live="polite"></span>
+            <button class="btn-primary" id="saveBtn" type="button" title="Ctrl+S">💾 Enregistrer</button>
           </div>
         </div>
 
         <div class="section">
           <div class="section-title">🗂️ Fichier de sauvegarde</div>
           <div class="global-actions">
-            <span class="save-status" id="globalStatus"></span>
+            <span class="save-status" id="globalStatus" role="status" aria-live="polite"></span>
           </div>
           <p style="font-size:12px;color:#888;margin-top:8px;line-height:1.5;">
             Le bouton <strong>💾 Enregistrer</strong> (ou <kbd>Ctrl</kbd>+<kbd>S</kbd>) écrit <strong>directement</strong>
@@ -194,9 +194,9 @@
 
   <div class="nav-bar" id="navBar">
     <div class="nav-inner">
-      <button class="nav-btn" id="prevBtn">← Précédent</button>
-      <span class="nav-center" id="navCenter">1 / 1</span>
-      <button class="nav-btn" id="nextBtn">Suivant →</button>
+      <button class="nav-btn" id="prevBtn" type="button">← Précédent</button>
+      <span class="nav-center" id="navCenter" aria-live="polite">1 / 1</span>
+      <button class="nav-btn" id="nextBtn" type="button">Suivant →</button>
     </div>
   </div>
 
