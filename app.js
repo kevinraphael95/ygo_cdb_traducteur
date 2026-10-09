@@ -26,6 +26,11 @@ let supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in windo
 let customKeywords = [];
 const CUSTOM_KEYWORDS_LS = 'cdb-translator-keywords';
 
+// Timeout pour les requêtes d'images vers YGOPRODeck.
+const IMAGE_FETCH_TIMEOUT_MS = 8000;
+// TTL du cache localStorage des URLs d'images : 30 jours.
+const IMAGE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 (function restoreCustomKeywords() {
   try {
     const s = localStorage.getItem(CUSTOM_KEYWORDS_LS);
@@ -153,47 +158,109 @@ function updateFiltersBadge() {
 }
 
 // ============================================================================
-// IMAGES
+// IMAGES — cache double (mémoire + localStorage) + timeout
 // ============================================================================
+// Clé de cache = card.id (unique). Le nom peut être partagé par plusieurs
+// cartes (alt-arts, rééditions) → collision.
 const imageCache = {};
-async function fetchCardImage(name) {
-  if (!name) return null;
-  if (imageCache[name] !== undefined) return imageCache[name];
-  const k = 'img_' + name;
-  try { const c = localStorage.getItem(k); if (c) { imageCache[name] = c; return c; } } catch {}
+
+async function fetchCardImage(card) {
+  if (!card || !card.id) return null;
+  const key = card.id;
+
+  if (imageCache[key] !== undefined) return imageCache[key];
+
+  // Cache localStorage avec TTL : on stocke { url, ts }.
+  const lsKey = 'img_' + key;
+  try {
+    const raw = localStorage.getItem(lsKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.ts === 'number'
+          && Date.now() - parsed.ts < IMAGE_CACHE_TTL_MS) {
+        imageCache[key] = parsed.url;
+        return parsed.url;
+      }
+    }
+  } catch (e) { /* format ancien ou stockage indisponible : on ignore */ }
+
+  const name = card.name_en || card.name_fr;
+  if (!name) {
+    imageCache[key] = null;
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+
   try {
     const url = `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`;
-    const r = await fetch(url);
-    if (!r.ok) { imageCache[name] = null; return null; }
-    const d = await r.json();
-    const u = d.data?.[0]?.card_images?.[0]?.image_url_cropped
-           || d.data?.[0]?.card_images?.[0]?.image_url || null;
-    imageCache[name] = u;
-    if (u) try { localStorage.setItem(k, u); } catch {}
-    return u;
-  } catch { imageCache[name] = null; return null; }
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      imageCache[key] = null;
+      return null;
+    }
+    const data = await res.json();
+    const imgUrl = data.data?.[0]?.card_images?.[0]?.image_url_cropped
+                || data.data?.[0]?.card_images?.[0]?.image_url
+                || null;
+    imageCache[key] = imgUrl;
+    if (imgUrl) {
+      try {
+        localStorage.setItem(lsKey, JSON.stringify({ url: imgUrl, ts: Date.now() }));
+      } catch (e) {}
+    }
+    return imgUrl;
+  } catch (err) {
+    clearTimeout(timer);
+    imageCache[key] = null;
+    return null;
+  }
 }
-async function loadCardImage(card) {
-  const imgEl = document.getElementById('cardImg');
-  if (!imgEl) return;
-  imgEl.removeAttribute('src');
-  imgEl.style.display = 'none';
-  const p = imgEl.parentElement;
-  let ph = p.querySelector('.img-placeholder');
+
+function ensurePlaceholder(parent) {
+  let ph = parent.querySelector('.img-placeholder');
   if (!ph) {
     ph = document.createElement('div');
     ph.className = 'img-placeholder';
     ph.textContent = '🃏';
-    ph.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:48px;color:#555;';
-    p.style.position = 'relative';
-    p.appendChild(ph);
+    parent.style.position = 'relative';
+    parent.appendChild(ph);
   }
-  const url = await fetchCardImage(card.name_en) || await fetchCardImage(card.name_fr);
+  return ph;
+}
+
+async function loadCardImage(card) {
+  const imgEl = document.getElementById('cardImg');
+  if (!imgEl) return;
+
+  imgEl.onload = null;
+  imgEl.onerror = null;
+  imgEl.removeAttribute('src');
+  imgEl.style.display = 'none';
+  imgEl.alt = card?.name_fr || card?.name_en || 'Carte';
+
+  const parent = imgEl.parentElement;
+  ensurePlaceholder(parent);
+
+  const url = await fetchCardImage(card);
+
   if (getFilteredCards()[currentIndex] !== card) return;
   if (!url) return;
-  ph?.remove();
+
+  // On retire le placeholder seulement après confirmation du chargement.
+  imgEl.onload = () => {
+    const ph = parent.querySelector('.img-placeholder');
+    if (ph) ph.remove();
+    imgEl.style.display = 'block';
+  };
+  imgEl.onerror = () => {
+    imgEl.removeAttribute('src');
+    imgEl.style.display = 'none';
+  };
   imgEl.src = url;
-  imgEl.style.display = 'block';
 }
 
 // ============================================================================
@@ -201,7 +268,7 @@ async function loadCardImage(card) {
 // ============================================================================
 async function pickCdb(type) {
   if (!supportsFS) {
-    alert('Ton navigateur ne supporte pas la sélection de fichiers. Utilise Chrome, Edge ou Opera.');
+    setGlobalStatus('Navigateur non supporté. Utilise Chrome, Edge ou Opera.', false);
     return;
   }
   try {
@@ -209,6 +276,18 @@ async function pickCdb(type) {
       multiple: false,
       types: [{ description: 'CDB SQLite', accept: { 'application/x-sqlite3': ['.cdb'] } }]
     });
+
+    // Validation rapide du header SQLite avant d'aller plus loin.
+    try {
+      const file = await h.getFile();
+      const header = new TextDecoder().decode((await file.slice(0, 16).arrayBuffer()));
+      if (!header.startsWith('SQLite format 3')) {
+        setGlobalStatus('Ce fichier n\'est pas un .cdb valide.', false);
+        return;
+      }
+    } catch (e) {
+      /* on continue quand même, la vraie erreur remontera au démarrage */
+    }
 
     if (type === 'source') {
       sourceFileHandle = h;
@@ -230,6 +309,8 @@ async function pickCdb(type) {
 // ============================================================================
 // CRÉATION D'UNE BASE FR VIDE
 // ============================================================================
+// Le schéma inclut str1..str16 (compatibilité avec d'autres lecteurs de cdb
+// Yu-Gi-Oh!) mais on ne les remplit pas — ils restent vides.
 function createEmptyFrDb(SQL) {
   const db = new SQL.Database();
   db.run(`CREATE TABLE texts (
@@ -254,7 +335,7 @@ function createEmptyFrDb(SQL) {
 // ============================================================================
 async function startApp() {
   if (!sourceFileHandle) {
-    alert('Il faut sélectionner un deck à traduire pour commencer.');
+    setGlobalStatus('Il faut sélectionner un deck à traduire pour commencer.', false);
     return;
   }
 
@@ -288,6 +369,9 @@ async function startApp() {
     const tradCards = extractCards(frDb);
     CARDS = mergeCards(sourceCards, tradCards);
 
+    // La DB source n'est plus utilisée : on libère la mémoire WASM.
+    sourceDb.close();
+
     const missingFr = CARDS.filter(c => c.missingFr).length;
     const missingEn = CARDS.filter(c => c.missingEn).length;
     console.log(`✅ ${CARDS.length} cartes chargées`);
@@ -296,6 +380,8 @@ async function startApp() {
 
     document.getElementById('loadingScreen').style.display = 'none';
     document.getElementById('appScreen').style.display = 'block';
+    document.body.classList.add('has-nav');
+    updateTopbarHeight();
 
     renderCustomChips();
     updateFiltersBadge();
@@ -303,7 +389,7 @@ async function startApp() {
 
   } catch (err) {
     console.error('❌', err);
-    alert('Erreur de chargement : ' + err.message);
+    setGlobalStatus('Erreur de chargement : ' + err.message, false);
     document.getElementById('loadingScreen').style.display = 'none';
     document.getElementById('welcomeScreen').style.display = 'flex';
   }
@@ -394,12 +480,8 @@ function mergeCards(sourceCards, tradCards) {
     });
   }
 
-  if (sourceOnly.length) {
-    console.warn(`⚠️ ${sourceOnly.length} carte(s) sans traduction`);
-  }
-  if (tradOnly.length) {
-    console.warn(`⚠️ ${tradOnly.length} carte(s) traduites sans original`);
-  }
+  if (sourceOnly.length) console.warn(`⚠️ ${sourceOnly.length} carte(s) sans traduction`);
+  if (tradOnly.length) console.warn(`⚠️ ${tradOnly.length} carte(s) traduites sans original`);
   if (!sourceOnly.length && !tradOnly.length && Object.keys(sourceCards).length && Object.keys(tradCards).length) {
     console.log('✅ Aucune carte orpheline');
   }
@@ -415,7 +497,6 @@ function render() {
   if (!CARDS.length) return;
   const filtered = getFilteredCards();
 
-  // Aucune carte ne correspond aux filtres
   if (!filtered.length) {
     document.getElementById('infoId').textContent = '—';
     document.getElementById('infoType').textContent = '—';
@@ -425,43 +506,34 @@ function render() {
     document.getElementById('infoStatus').textContent = 'Aucune carte';
     document.getElementById('origName').textContent = '—';
     document.getElementById('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
-  
-    // Vider l'image et remettre le placeholder
+
     const imgEl = document.getElementById('cardImg');
     if (imgEl) {
+      imgEl.onload = null;
+      imgEl.onerror = null;
       imgEl.removeAttribute('src');
       imgEl.style.display = 'none';
-      const p = imgEl.parentElement;
-      let ph = p.querySelector('.img-placeholder');
-      if (!ph) {
-        ph = document.createElement('div');
-        ph.className = 'img-placeholder';
-        ph.textContent = '🃏';
-        ph.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:48px;color:#555;';
-        p.style.position = 'relative';
-        p.appendChild(ph);
-      }
+      ensurePlaceholder(imgEl.parentElement);
     }
-  
+
     const nameEl = document.getElementById('editNameFr');
     const descEl = document.getElementById('editDescFr');
     if (nameEl) { nameEl.value = ''; nameEl.disabled = true; }
     if (descEl) { descEl.value = ''; descEl.disabled = true; }
-  
+
     const tagsEl = document.getElementById('transTags');
     if (tagsEl) tagsEl.innerHTML = '';
     const mb = document.getElementById('missingBadge');
     if (mb) mb.style.display = 'none';
     const modb = document.getElementById('modifiedBadge');
     if (modb) modb.style.display = 'none';
-  
+
     document.getElementById('navCenter').textContent = '0 / 0';
     document.getElementById('prevBtn').disabled = true;
     document.getElementById('nextBtn').disabled = true;
     return;
   }
 
-  // Réactive les champs si besoin
   const nameEl = document.getElementById('editNameFr');
   const descEl = document.getElementById('editDescFr');
   if (nameEl) nameEl.disabled = false;
@@ -493,38 +565,34 @@ function render() {
 
   const mb = document.getElementById('missingBadge');
   if (mb) {
-    if (card.missingFr) {
-      mb.textContent = '⚠️ Traduction manquante';
-      mb.style.display = '';
-    } else if (card.missingEn) {
-      mb.textContent = '⚠️ Original manquant';
-      mb.style.display = '';
-    } else {
-      mb.style.display = 'none';
-    }
+    if (card.missingFr) { mb.textContent = '⚠️ Traduction manquante'; mb.style.display = ''; }
+    else if (card.missingEn) { mb.textContent = '⚠️ Original manquant'; mb.style.display = ''; }
+    else mb.style.display = 'none';
   }
 
   document.getElementById('navCenter').textContent = `${currentIndex + 1} / ${filtered.length}`;
   document.getElementById('prevBtn').disabled = currentIndex === 0;
   document.getElementById('nextBtn').disabled = currentIndex === filtered.length - 1;
 
-  dirty = false;
   setSaveStatus('');
   updateModifiedCount();
+  // NOTE : on ne touche PAS `dirty` ici. C'est `markDirty` / `saveCurrentCard`
+  // / `resetCurrentCard` qui gèrent ce flag. Avant, `render()` remettait
+  // dirty = false, ce qui pouvait perdre des modifs silencieusement.
 }
 
 function setSaveStatus(msg, ok = true) {
   const el = document.getElementById('saveStatus');
   if (!el) return;
   el.textContent = msg;
-  el.style.color = ok ? '#2a8a4a' : '#a82a2a';
+  el.classList.toggle('is-error', !ok && !!msg);
   if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
 }
 function setGlobalStatus(msg, ok = true) {
   const el = document.getElementById('globalStatus');
   if (!el) return;
   el.textContent = msg;
-  el.style.color = ok ? '#2a8a4a' : '#a82a2a';
+  el.classList.toggle('is-error', !ok && !!msg);
   if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3500);
 }
 function updateModifiedCount() {
@@ -553,8 +621,6 @@ function hasUnsavedChanges() {
 }
 
 function confirmDiscardIfDirty() {
-  // On utilise `dirty` (mis à jour par les vrais inputs utilisateur),
-  // pas hasUnsavedChanges() qui compare avec la carte actuellement filtrée.
   if (!dirty) return true;
   return confirm('Modifications non enregistrées sur cette carte. Continuer et les perdre ?');
 }
@@ -596,34 +662,26 @@ async function writeCdbToDisk() {
   await w.close();
 }
 
+// Écrit (ou remplace) une ligne dans `texts`. Un seul appel SQL :
+// INSERT OR REPLACE fait l'update si la ligne existe, sinon l'insert.
 function updateDbForCard(card, name_fr, desc_fr) {
   if (!frDb) return;
-  const idNum = parseInt(card.id);
+  const idNum = parseInt(card.id, 10);
+  if (!Number.isFinite(idNum)) return;
 
-  const upd = frDb.prepare("UPDATE texts SET name = ?, desc = ? WHERE id = ?");
-  upd.run([name_fr, desc_fr, idNum]);
-  upd.free();
-
-  const check = frDb.exec(`SELECT COUNT(*) FROM texts WHERE id = ${idNum}`);
-  const exists = (check[0]?.values?.[0]?.[0] || 0) > 0;
-
-  if (!exists) {
-    const cols = ['id', 'name', 'desc'];
-    const vals = [idNum, name_fr, desc_fr];
-    for (let i = 1; i <= 16; i++) {
-      cols.push('str' + i);
-      vals.push('');
-    }
-    const placeholders = cols.map(() => '?').join(',');
-    const ins = frDb.prepare(`INSERT INTO texts (${cols.join(',')}) VALUES (${placeholders})`);
-    ins.run(vals);
-    ins.free();
-  }
+  const cols = ['id', 'name', 'desc'];
+  const vals = [idNum, name_fr, desc_fr];
+  for (let i = 1; i <= 16; i++) { cols.push('str' + i); vals.push(''); }
+  const placeholders = cols.map(() => '?').join(',');
+  const sql = `INSERT OR REPLACE INTO texts (${cols.join(',')}) VALUES (${placeholders})`;
+  frDb.run(sql, vals);
 }
 
 function deleteDbCard(card) {
   if (!frDb) return;
-  frDb.exec(`DELETE FROM texts WHERE id = ${parseInt(card.id)}`);
+  const idNum = parseInt(card.id, 10);
+  if (!Number.isFinite(idNum)) return;
+  frDb.run("DELETE FROM texts WHERE id = ?", [idNum]);
 }
 
 // ============================================================================
@@ -638,30 +696,41 @@ async function saveCurrentCard() {
   const name_fr = document.getElementById('editNameFr').value;
   const desc_fr = document.getElementById('editDescFr').value;
 
+  // 1) Permission d'écriture AVANT de toucher quoi que ce soit en mémoire.
+  let ok;
+  try {
+    ok = await ensureFileHandle();
+  } catch (e) {
+    console.error(e);
+    setSaveStatus('❌ Erreur accès fichier : ' + e.message, false);
+    return;
+  }
+  if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
+
+  // 2) Modification de la DB et de l'objet carte.
   updateDbForCard(card, name_fr, desc_fr);
   card.name_fr = name_fr;
   card.desc_fr = desc_fr;
 
   if (card.missingFr) {
     if (name_fr.trim() || desc_fr.trim()) card.missingFr = false;
-    card.edited = (name_fr !== '') || (desc_fr !== '');
+    card.edited = (name_fr.trim() !== '') || (desc_fr.trim() !== '');
   } else {
     card.edited = (name_fr !== card.name_fr_orig)
                || (normalizeNewlines(desc_fr) !== normalizeNewlines(card.desc_fr_orig));
   }
 
+  // 3) Écriture sur disque.
   try {
-    const ok = await ensureFileHandle();
-    if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
     await writeCdbToDisk();
-    const target = tradFileName || 'nouveau fichier';
-    setSaveStatus(`💾 Enregistré dans ${target}`, true);
+    setSaveStatus(`💾 Enregistré dans ${tradFileName || 'nouveau fichier'}`, true);
   } catch (e) {
     console.error(e);
     setSaveStatus('❌ Erreur écriture : ' + e.message, false);
     return;
   }
 
+  // 4) Rafraîchissement de l'UI.
   renderTags(card.desc_fr);
   document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
 
@@ -688,13 +757,20 @@ async function resetCurrentCard() {
 
   if (card.missingFr) {
     if ((card.name_fr || card.desc_fr) && !confirm('Vider cette traduction ?')) return;
+
+    let ok;
+    try {
+      ok = await ensureFileHandle();
+    } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
+    if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
+
     card.name_fr = '';
     card.desc_fr = '';
     card.edited = false;
     deleteDbCard(card);
+
     try {
-      const ok = await ensureFileHandle();
-      if (ok) await writeCdbToDisk();
+      await writeCdbToDisk();
       setSaveStatus('↺ Traduction supprimée', true);
     } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
     render();
@@ -703,14 +779,19 @@ async function resetCurrentCard() {
 
   if (card.edited && !confirm('Réinitialiser cette carte à sa traduction d\'origine ?')) return;
 
+  let ok;
+  try {
+    ok = await ensureFileHandle();
+  } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
+  if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
+
   card.name_fr = card.name_fr_orig;
   card.desc_fr = card.desc_fr_orig;
   card.edited = false;
   updateDbForCard(card, card.name_fr, card.desc_fr);
 
   try {
-    const ok = await ensureFileHandle();
-    if (ok) await writeCdbToDisk();
+    await writeCdbToDisk();
     setSaveStatus('↺ Réinitialisé', true);
   } catch (e) {
     setSaveStatus('❌ Erreur : ' + e.message, false);
@@ -750,18 +831,34 @@ document.getElementById('resetCardBtn').addEventListener('click', resetCurrentCa
 const filtersBtn = document.getElementById('filtersBtn');
 const filtersPanel = document.getElementById('filtersPanel');
 
+function openFiltersPanel() {
+  if (!filtersPanel) return;
+  filtersPanel.classList.add('open');
+  filtersBtn?.setAttribute('aria-expanded', 'true');
+}
+function closeFiltersPanel(restoreFocus = false) {
+  if (!filtersPanel) return;
+  const wasOpen = filtersPanel.classList.contains('open');
+  filtersPanel.classList.remove('open');
+  filtersBtn?.setAttribute('aria-expanded', 'false');
+  if (wasOpen && restoreFocus) filtersBtn?.focus();
+}
+
 if (filtersBtn && filtersPanel) {
   filtersBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    filtersPanel.classList.toggle('open');
+    if (filtersPanel.classList.contains('open')) closeFiltersPanel();
+    else openFiltersPanel();
   });
   document.addEventListener('click', (e) => {
     if (!filtersPanel.contains(e.target) && !filtersBtn.contains(e.target)) {
-      filtersPanel.classList.remove('open');
+      closeFiltersPanel();
     }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') filtersPanel.classList.remove('open');
+    if (e.key === 'Escape' && filtersPanel.classList.contains('open')) {
+      closeFiltersPanel(true);
+    }
   });
 }
 
@@ -817,7 +914,7 @@ function renderCustomChips() {
   customChips.innerHTML = customKeywords.map(kw => `
     <span class="custom-chip">
       <span class="chip-label">${esc(kw)}</span>
-      <button type="button" class="chip-remove" data-keyword="${esc(kw)}" title="Retirer" aria-label="Retirer">✕</button>
+      <button type="button" class="chip-remove" data-keyword="${esc(kw)}" title="Retirer" aria-label="Retirer le filtre : ${esc(kw)}">✕</button>
     </span>
   `).join('');
   customChips.querySelectorAll('.chip-remove').forEach(btn => {
@@ -924,8 +1021,10 @@ document.addEventListener('keydown', (e) => {
 // ============================================================================
 // WARNING AVANT DE QUITTER
 // ============================================================================
+// On utilise `dirty` (le vrai flag d'état) plutôt que hasUnsavedChanges(),
+// plus fiable vis-à-vis de la carte filtrée.
 window.addEventListener('beforeunload', (e) => {
-  if (hasUnsavedChanges()) { e.preventDefault(); e.returnValue = ''; }
+  if (dirty) { e.preventDefault(); }
 });
 
 // ============================================================================
@@ -936,6 +1035,16 @@ function esc(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 }
+
+// La topbar peut changer de hauteur (wrap en mobile, etc.). On expose sa
+// hauteur réelle en CSS via --topbar-height pour que le panneau filtres
+// mobile s'ancre correctement.
+function updateTopbarHeight() {
+  const topbar = document.querySelector('.topbar');
+  if (!topbar) return;
+  document.documentElement.style.setProperty('--topbar-height', topbar.offsetHeight + 'px');
+}
+window.addEventListener('resize', updateTopbarHeight);
 
 // ============================================================================
 // THÈME
@@ -957,6 +1066,7 @@ function toggleTheme() {
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
 
+  // Les couleurs des tags dépendent du thème : on re-render la carte courante.
   const card = getFilteredCards()[currentIndex];
   if (card) renderTags(card.desc_fr);
 }
