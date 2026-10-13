@@ -31,6 +31,9 @@ const IMAGE_FETCH_TIMEOUT_MS = 8000;
 // TTL du cache localStorage des URLs d'images : 30 jours.
 const IMAGE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// Fichier cardinfo (tables de traduction type/attribut/race).
+const CARDINFO_URL = 'cardinfo_fr.txt';
+
 (function restoreCustomKeywords() {
   try {
     const s = localStorage.getItem(CUSTOM_KEYWORDS_LS);
@@ -43,34 +46,67 @@ function saveCustomKeywords() {
 }
 
 // ============================================================================
-// CODES YGOPRO
+// CODES YGOPRO (chargés depuis cardinfo_fr.txt)
 // ============================================================================
-const ATTRIBUTES = { 1:'EARTH',2:'WATER',4:'FIRE',8:'WIND',16:'LIGHT',32:'DARK',64:'DIVINE' };
+// Les tables ATTRIBUTES / TYPES / RACES sont remplies dynamiquement au
+// démarrage par loadCardInfo(). Ça évite les bugs de valeurs en dur (comme
+// le décalage Xyz/Pendule/Lien) et permet de mettre à jour les libellés
+// sans toucher au code.
+
+let ATTRIBUTES = {};
+let TYPES = [];
+let RACES = {};
+
+async function loadCardInfo(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`cardinfo introuvable : ${url} (HTTP ${res.status})`);
+  const text = await res.text();
+  const lines = text.split(/\r?\n/);
+  let section = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, '');
+    if (!line) continue;
+    if (line.startsWith('##')) { section = line.slice(2).trim().toLowerCase(); continue; }
+    if (line.startsWith('#end')) break;
+    if (line.startsWith('#')) continue;
+
+    const tabIdx = line.indexOf('\t');
+    if (tabIdx === -1) continue;
+
+    const hexPart = line.slice(0, tabIdx).trim();
+    const label = line.slice(tabIdx + 1).trim();
+
+    let value;
+    if (hexPart.startsWith('-')) value = parseInt(hexPart, 10);
+    else value = parseInt(hexPart, 16);
+    if (isNaN(value)) continue;
+
+    if (section === 'attribute') ATTRIBUTES[value] = label;
+    else if (section === 'type') TYPES.push({ v: value, label });
+    else if (section === 'race') RACES[value] = label;
+  }
+
+  console.log(`✅ cardinfo chargé : ${Object.keys(ATTRIBUTES).length} attributs, ` +
+              `${TYPES.length} types, ${Object.keys(RACES).length} races`);
+}
+
 function attributeToString(a) { return a ? (ATTRIBUTES[a] || `Attr${a}`) : '—'; }
 
-const TYPES = [
-  { v:1,label:'Monstre' },{ v:2,label:'Magie' },{ v:4,label:'Piège' },
-  { v:16,label:'Normal' },{ v:32,label:'Effet' },{ v:64,label:'Fusion' },
-  { v:128,label:'Rituel' },{ v:256,label:'Spirit' },{ v:512,label:'Union' },
-  { v:1024,label:'Gemini' },{ v:2048,label:'Tuner' },{ v:4096,label:'Synchro' },
-  { v:16384,label:'Quick-Play' },{ v:65536,label:'Continu' },
-  { v:131072,label:'Équipement' },{ v:262144,label:'Terrain' },
-  { v:524288,label:'Compteur' },{ v:1048576,label:'Flip' },
-  { v:2097152,label:'Toon' },{ v:4194304,label:'Xyz' },
-  { v:8388608,label:'Pendule' },{ v:16777216,label:'Lien' },
-];
 function typeToString(t) {
   if (!t) return '—';
   const p = [];
   for (const x of TYPES) if (t & x.v) p.push(x.label);
   return p.length ? p.join(' / ') : `Type ${t}`;
 }
+
 function formatStat(v) {
   if (v == null) return '—';
   if (v === -2 || v === -1) return '?';
   if (v < 0) return '0';
   return String(v);
 }
+
 function normalizeNewlines(s) {
   return String(s || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
@@ -160,8 +196,6 @@ function updateFiltersBadge() {
 // ============================================================================
 // IMAGES — cache double (mémoire + localStorage) + timeout
 // ============================================================================
-// Clé de cache = card.id (unique). Le nom peut être partagé par plusieurs
-// cartes (alt-arts, rééditions) → collision.
 const imageCache = {};
 
 async function fetchCardImage(card) {
@@ -170,7 +204,6 @@ async function fetchCardImage(card) {
 
   if (imageCache[key] !== undefined) return imageCache[key];
 
-  // Cache localStorage avec TTL : on stocke { url, ts }.
   const lsKey = 'img_' + key;
   try {
     const raw = localStorage.getItem(lsKey);
@@ -250,7 +283,6 @@ async function loadCardImage(card) {
   if (getFilteredCards()[currentIndex] !== card) return;
   if (!url) return;
 
-  // On retire le placeholder seulement après confirmation du chargement.
   imgEl.onload = () => {
     const ph = parent.querySelector('.img-placeholder');
     if (ph) ph.remove();
@@ -277,7 +309,6 @@ async function pickCdb(type) {
       types: [{ description: 'CDB SQLite', accept: { 'application/x-sqlite3': ['.cdb'] } }]
     });
 
-    // Validation rapide du header SQLite avant d'aller plus loin.
     try {
       const file = await h.getFile();
       const header = new TextDecoder().decode((await file.slice(0, 16).arrayBuffer()));
@@ -286,7 +317,7 @@ async function pickCdb(type) {
         return;
       }
     } catch (e) {
-      /* on continue quand même, la vraie erreur remontera au démarrage */
+      /* on continue quand même */
     }
 
     if (type === 'source') {
@@ -309,8 +340,6 @@ async function pickCdb(type) {
 // ============================================================================
 // CRÉATION D'UNE BASE FR VIDE
 // ============================================================================
-// Le schéma inclut str1..str16 (compatibilité avec d'autres lecteurs de cdb
-// Yu-Gi-Oh!) mais on ne les remplit pas — ils restent vides.
 function createEmptyFrDb(SQL) {
   const db = new SQL.Database();
   db.run(`CREATE TABLE texts (
@@ -344,6 +373,9 @@ async function startApp() {
   document.getElementById('welcomeScreen').style.display = 'none';
 
   try {
+    lt.textContent = 'Chargement du cardinfo…';
+    await loadCardInfo(CARDINFO_URL);
+
     lt.textContent = 'Initialisation de SQLite…';
     const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
     window.SQL = SQL;
@@ -369,7 +401,6 @@ async function startApp() {
     const tradCards = extractCards(frDb);
     CARDS = mergeCards(sourceCards, tradCards);
 
-    // La DB source n'est plus utilisée : on libère la mémoire WASM.
     sourceDb.close();
 
     const missingFr = CARDS.filter(c => c.missingFr).length;
@@ -576,9 +607,6 @@ function render() {
 
   setSaveStatus('');
   updateModifiedCount();
-  // NOTE : on ne touche PAS `dirty` ici. C'est `markDirty` / `saveCurrentCard`
-  // / `resetCurrentCard` qui gèrent ce flag. Avant, `render()` remettait
-  // dirty = false, ce qui pouvait perdre des modifs silencieusement.
 }
 
 function setSaveStatus(msg, ok = true) {
@@ -662,8 +690,6 @@ async function writeCdbToDisk() {
   await w.close();
 }
 
-// Écrit (ou remplace) une ligne dans `texts`. Un seul appel SQL :
-// INSERT OR REPLACE fait l'update si la ligne existe, sinon l'insert.
 function updateDbForCard(card, name_fr, desc_fr) {
   if (!frDb) return;
   const idNum = parseInt(card.id, 10);
@@ -696,7 +722,6 @@ async function saveCurrentCard() {
   const name_fr = document.getElementById('editNameFr').value;
   const desc_fr = document.getElementById('editDescFr').value;
 
-  // 1) Permission d'écriture AVANT de toucher quoi que ce soit en mémoire.
   let ok;
   try {
     ok = await ensureFileHandle();
@@ -707,7 +732,6 @@ async function saveCurrentCard() {
   }
   if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
 
-  // 2) Modification de la DB et de l'objet carte.
   updateDbForCard(card, name_fr, desc_fr);
   card.name_fr = name_fr;
   card.desc_fr = desc_fr;
@@ -720,7 +744,6 @@ async function saveCurrentCard() {
                || (normalizeNewlines(desc_fr) !== normalizeNewlines(card.desc_fr_orig));
   }
 
-  // 3) Écriture sur disque.
   try {
     await writeCdbToDisk();
     setSaveStatus(`💾 Enregistré dans ${tradFileName || 'nouveau fichier'}`, true);
@@ -730,7 +753,6 @@ async function saveCurrentCard() {
     return;
   }
 
-  // 4) Rafraîchissement de l'UI.
   renderTags(card.desc_fr);
   document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
 
@@ -1021,8 +1043,6 @@ document.addEventListener('keydown', (e) => {
 // ============================================================================
 // WARNING AVANT DE QUITTER
 // ============================================================================
-// On utilise `dirty` (le vrai flag d'état) plutôt que hasUnsavedChanges(),
-// plus fiable vis-à-vis de la carte filtrée.
 window.addEventListener('beforeunload', (e) => {
   if (dirty) { e.preventDefault(); }
 });
@@ -1036,9 +1056,6 @@ function esc(s) {
   }[c]));
 }
 
-// La topbar peut changer de hauteur (wrap en mobile, etc.). On expose sa
-// hauteur réelle en CSS via --topbar-height pour que le panneau filtres
-// mobile s'ancre correctement.
 function updateTopbarHeight() {
   const topbar = document.querySelector('.topbar');
   if (!topbar) return;
@@ -1066,7 +1083,6 @@ function toggleTheme() {
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
 
-  // Les couleurs des tags dépendent du thème : on re-render la carte courante.
   const card = getFilteredCards()[currentIndex];
   if (card) renderTags(card.desc_fr);
 }
