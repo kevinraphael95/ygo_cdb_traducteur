@@ -194,8 +194,62 @@ function updateFiltersBadge() {
 }
 
 // ============================================================================
-// IMAGES — cache double (mémoire + localStorage) + timeout
+// IMAGES — bases locales (partagées avec le Vérif) → cache → API YGOPRODeck
 // ============================================================================
+// Bases d'images partagées avec le site Vérif (une seule copie à maintenir)
+const DATA_BASE = 'https://kevinraphael95.github.io/vaact_verif_traduction/data/';
+let localCardsDb = null;
+let localYugiDb = null;
+let nameIndex = null; // nom normalisé → URL image
+
+const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+async function loadLocalDatabases() {
+  const [a, b] = await Promise.allSettled([
+    fetch(DATA_BASE + 'cards-db.json').then(r => r.ok ? r.json() : null),
+    fetch(DATA_BASE + 'yugipedia-db.json').then(r => r.ok ? r.json() : null),
+  ]);
+  if (a.status === 'fulfilled') localCardsDb = a.value;
+  if (b.status === 'fulfilled') localYugiDb = b.value;
+  buildNameIndex();
+}
+
+function buildNameIndex() {
+  nameIndex = new Map();
+  if (localCardsDb) {
+    for (const c of Object.values(localCardsDb)) {
+      const img = c?.img_cropped || c?.img_full;
+      if (!img) continue;
+      for (const n of [c.en, c.fr]) {
+        const k = normName(n);
+        if (k && !nameIndex.has(k)) nameIndex.set(k, img);
+      }
+    }
+  }
+  if (localYugiDb) {
+    for (const [key, y] of Object.entries(localYugiDb)) {
+      const img = y?.img || y?.img_en;
+      if (!img) continue;
+      for (const n of [key, y.en, y.fr]) {
+        const k = normName(n);
+        if (k && !nameIndex.has(k)) nameIndex.set(k, img);
+      }
+    }
+  }
+}
+
+function findLocalImage(card) {
+  const id = String(card.id || '').trim();
+  const c = localCardsDb?.[id];
+  if (c?.img_cropped || c?.img_full) return c.img_cropped || c.img_full;
+  const y = localYugiDb?.[id];
+  if (y?.img || y?.img_en) return y.img || y.img_en;
+  if (!nameIndex) return null;
+  return nameIndex.get(normName(card.name_en))
+      || nameIndex.get(normName(card.name_fr))
+      || null;
+}
+
 const imageCache = {};
 
 async function fetchCardImage(card) {
@@ -204,6 +258,11 @@ async function fetchCardImage(card) {
 
   if (imageCache[key] !== undefined) return imageCache[key];
 
+  // 1. Bases locales (Vérif) : aucune requête API
+  const local = findLocalImage(card);
+  if (local) { imageCache[key] = local; return local; }
+
+  // 2. Cache localStorage
   const lsKey = 'img_' + key;
   try {
     const raw = localStorage.getItem(lsKey);
@@ -223,6 +282,7 @@ async function fetchCardImage(card) {
     return null;
   }
 
+  // 3. API YGOPRODeck en dernier recours
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
 
@@ -375,6 +435,9 @@ async function startApp() {
   try {
     lt.textContent = 'Chargement du cardinfo…';
     await loadCardInfo(CARDINFO_URL);
+
+    lt.textContent = 'Chargement des images…';
+    await loadLocalDatabases();
 
     lt.textContent = 'Initialisation de SQLite…';
     const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
