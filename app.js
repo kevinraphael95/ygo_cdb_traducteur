@@ -201,6 +201,12 @@ let imageIndexByName = null;
 let localCardsDb = null;
 let localYugiDb = null;
 
+// Délai avant de lancer le chargement d'une image : si on change de carte
+// avant la fin du délai, la demande est annulée (évite les 429 de Yugipedia
+// quand on enchaîne Suivant / Aléatoire).
+const IMAGE_LOAD_DELAY_MS = 150;
+let imageTimer = null;
+
 const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function buildImageIndex() {
@@ -282,6 +288,10 @@ function ensurePlaceholder(parent) {
 async function loadCardImage(card) {
   const imgEl = document.getElementById('cardImg');
   if (!imgEl) return;
+
+  // Annule la demande précédente si elle n'est pas encore partie
+  clearTimeout(imageTimer);
+
   imgEl.onload = null;
   imgEl.onerror = null;
   imgEl.removeAttribute('src');
@@ -291,20 +301,22 @@ async function loadCardImage(card) {
   const parent = imgEl.parentElement;
   ensurePlaceholder(parent);
 
-  const url = await fetchCardImage(card);
-  if (getFilteredCards()[currentIndex] !== card) return;
-  if (!url) return;
+  imageTimer = setTimeout(async () => {
+    const url = await fetchCardImage(card);
+    if (getFilteredCards()[currentIndex] !== card) return;
+    if (!url) return;
 
-  imgEl.onload = () => {
-    const ph = parent.querySelector('.img-placeholder');
-    if (ph) ph.remove();
-    imgEl.style.display = 'block';
-  };
-  imgEl.onerror = () => {
-    imgEl.removeAttribute('src');
-    imgEl.style.display = 'none';
-  };
-  imgEl.src = url;
+    imgEl.onload = () => {
+      const ph = parent.querySelector('.img-placeholder');
+      if (ph) ph.remove();
+      imgEl.style.display = 'block';
+    };
+    imgEl.onerror = () => {
+      imgEl.removeAttribute('src');
+      imgEl.style.display = 'none';
+    };
+    imgEl.src = url;
+  }, IMAGE_LOAD_DELAY_MS);
 }
 
 // ============================================================================
@@ -523,6 +535,7 @@ function render() {
     document.getElementById('infoStatus').textContent = 'Aucune carte';
     document.getElementById('origName').textContent = '—';
     document.getElementById('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
+    clearTimeout(imageTimer);
     const imgEl = document.getElementById('cardImg');
     if (imgEl) {
       imgEl.onload = null; imgEl.onerror = null;
