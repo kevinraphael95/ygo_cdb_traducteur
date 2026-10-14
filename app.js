@@ -19,20 +19,25 @@ let CARDS = [];
 let currentIndex = 0;
 let dirty = false;
 let frDb = null;
-let sourceFileHandle = null;    // deck à traduire (requis)
-let tradFileHandle = null;      // traduction existante (optionnel)
+let sourceFileHandle = null;
+let tradFileHandle = null;
 let tradFileName = '';
 let supportsFS = 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 let customKeywords = [];
 const CUSTOM_KEYWORDS_LS = 'cdb-translator-keywords';
 
-// Timeout pour les requêtes d'images vers YGOPRODeck.
 const IMAGE_FETCH_TIMEOUT_MS = 8000;
-// TTL du cache localStorage des URLs d'images : 30 jours.
 const IMAGE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// Fichier cardinfo (tables de traduction type/attribut/race).
-const CARDINFO_URL = 'cardinfo_fr.txt';
+// ============================================================================
+// SOURCES DE DONNÉES (repo ygo_outil_fr)
+// ============================================================================
+// Toutes les données (cardinfo + JSON d'images) sont dans data/ du repo
+// ygo_outil_fr. Une seule copie à maintenir, partagée avec le Vérif.
+const DATA_BASE = 'https://kevinraphael95.github.io/ygo_outil_fr/data/';
+const CARDINFO_URL = DATA_BASE + 'cardinfo_fr.txt';
+const CARDS_DB_JSON = DATA_BASE + 'cards-db.json';
+const YUGI_DB_JSON = DATA_BASE + 'yugipedia-db.json';
 
 (function restoreCustomKeywords() {
   try {
@@ -48,11 +53,6 @@ function saveCustomKeywords() {
 // ============================================================================
 // CODES YGOPRO (chargés depuis cardinfo_fr.txt)
 // ============================================================================
-// Les tables ATTRIBUTES / TYPES / RACES sont remplies dynamiquement au
-// démarrage par loadCardInfo(). Ça évite les bugs de valeurs en dur (comme
-// le décalage Xyz/Pendule/Lien) et permet de mettre à jour les libellés
-// sans toucher au code.
-
 let ATTRIBUTES = {};
 let TYPES = [];
 let RACES = {};
@@ -87,8 +87,7 @@ async function loadCardInfo(url) {
     else if (section === 'race') RACES[value] = label;
   }
 
-  console.log(`✅ cardinfo chargé : ${Object.keys(ATTRIBUTES).length} attributs, ` +
-              `${TYPES.length} types, ${Object.keys(RACES).length} races`);
+  console.log(`✅ cardinfo chargé : ${Object.keys(ATTRIBUTES).length} attributs, ${TYPES.length} types, ${Object.keys(RACES).length} races`);
 }
 
 function attributeToString(a) { return a ? (ATTRIBUTES[a] || `Attr${a}`) : '—'; }
@@ -112,7 +111,7 @@ function normalizeNewlines(s) {
 }
 
 // ============================================================================
-// TAGS AUTO — détecte [XXX] dans les descriptions
+// TAGS AUTO
 // ============================================================================
 function extractTags(descFr) {
   if (!descFr) return [];
@@ -194,35 +193,28 @@ function updateFiltersBadge() {
 }
 
 // ============================================================================
-// IMAGES — bases locales (partagées avec le Vérif) → cache → API YGOPRODeck
+// IMAGES — index préconstruit depuis data/*.json
 // ============================================================================
-// Bases d'images partagées avec le site Vérif (une seule copie à maintenir)
-const DATA_BASE = 'https://kevinraphael95.github.io/ygo_outil_fr/data/';
+const imageCache = {};
+let imageIndexById = null;
+let imageIndexByName = null;
 let localCardsDb = null;
 let localYugiDb = null;
-let nameIndex = null; // nom normalisé → URL image
 
 const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-async function loadLocalDatabases() {
-  const [a, b] = await Promise.allSettled([
-    fetch(DATA_BASE + 'cards-db.json').then(r => r.ok ? r.json() : null),
-    fetch(DATA_BASE + 'yugipedia-db.json').then(r => r.ok ? r.json() : null),
-  ]);
-  if (a.status === 'fulfilled') localCardsDb = a.value;
-  if (b.status === 'fulfilled') localYugiDb = b.value;
-  buildNameIndex();
-}
+function buildImageIndex() {
+  imageIndexById = new Map();
+  imageIndexByName = new Map();
 
-function buildNameIndex() {
-  nameIndex = new Map();
   if (localCardsDb) {
-    for (const c of Object.values(localCardsDb)) {
+    for (const [id, c] of Object.entries(localCardsDb)) {
       const img = c?.img_cropped || c?.img_full;
       if (!img) continue;
+      imageIndexById.set(String(id).trim(), img);
       for (const n of [c.en, c.fr]) {
         const k = normName(n);
-        if (k && !nameIndex.has(k)) nameIndex.set(k, img);
+        if (k && !imageIndexByName.has(k)) imageIndexByName.set(k, img);
       }
     }
   }
@@ -230,87 +222,49 @@ function buildNameIndex() {
     for (const [key, y] of Object.entries(localYugiDb)) {
       const img = y?.img || y?.img_en;
       if (!img) continue;
+      if (!imageIndexById.has(String(key).trim())) {
+        imageIndexById.set(String(key).trim(), img);
+      }
       for (const n of [key, y.en, y.fr]) {
         const k = normName(n);
-        if (k && !nameIndex.has(k)) nameIndex.set(k, img);
+        if (k && !imageIndexByName.has(k)) imageIndexByName.set(k, img);
       }
     }
   }
+  console.log(`✅ Index images : ${imageIndexById.size} par ID, ${imageIndexByName.size} par nom`);
 }
 
-function findLocalImage(card) {
+async function loadLocalDatabases() {
+  try {
+    const [a, b] = await Promise.allSettled([
+      fetch(CARDS_DB_JSON).then(r => r.ok ? r.json() : null),
+      fetch(YUGI_DB_JSON).then(r => r.ok ? r.json() : null),
+    ]);
+    if (a.status === 'fulfilled' && a.value) localCardsDb = a.value;
+    if (b.status === 'fulfilled' && b.value) localYugiDb = b.value;
+  } catch (e) {
+    console.warn('Erreur chargement DB locales:', e);
+  }
+}
+
+function findImageUrl(card) {
+  if (!card) return null;
   const id = String(card.id || '').trim();
-  const c = localCardsDb?.[id];
-  if (c?.img_cropped || c?.img_full) return c.img_cropped || c.img_full;
-  const y = localYugiDb?.[id];
-  if (y?.img || y?.img_en) return y.img || y.img_en;
-  if (!nameIndex) return null;
-  return nameIndex.get(normName(card.name_en))
-      || nameIndex.get(normName(card.name_fr))
-      || null;
+  if (id && imageIndexById?.has(id)) return imageIndexById.get(id);
+  const nEn = normName(card.name_en);
+  if (nEn && imageIndexByName?.has(nEn)) return imageIndexByName.get(nEn);
+  const nFr = normName(card.name_fr);
+  if (nFr && imageIndexByName?.has(nFr)) return imageIndexByName.get(nFr);
+  return null;
 }
-
-const imageCache = {};
 
 async function fetchCardImage(card) {
-  if (!card || !card.id) return null;
-  const key = card.id;
-
+  if (!card) return null;
+  const key = String(card.id || card.name_en || card.name_fr || '').trim();
   if (imageCache[key] !== undefined) return imageCache[key];
-
-  // 1. Bases locales (Vérif) : aucune requête API
-  const local = findLocalImage(card);
-  if (local) { imageCache[key] = local; return local; }
-
-  // 2. Cache localStorage
-  const lsKey = 'img_' + key;
-  try {
-    const raw = localStorage.getItem(lsKey);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.ts === 'number'
-          && Date.now() - parsed.ts < IMAGE_CACHE_TTL_MS) {
-        imageCache[key] = parsed.url;
-        return parsed.url;
-      }
-    }
-  } catch (e) { /* format ancien ou stockage indisponible : on ignore */ }
-
-  const name = card.name_en || card.name_fr;
-  if (!name) {
-    imageCache[key] = null;
-    return null;
-  }
-
-  // 3. API YGOPRODeck en dernier recours
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
-
-  try {
-    const url = `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      imageCache[key] = null;
-      return null;
-    }
-    const data = await res.json();
-    const imgUrl = data.data?.[0]?.card_images?.[0]?.image_url_cropped
-                || data.data?.[0]?.card_images?.[0]?.image_url
-                || null;
-    imageCache[key] = imgUrl;
-    if (imgUrl) {
-      try {
-        localStorage.setItem(lsKey, JSON.stringify({ url: imgUrl, ts: Date.now() }));
-      } catch (e) {}
-    }
-    return imgUrl;
-  } catch (err) {
-    clearTimeout(timer);
-    imageCache[key] = null;
-    return null;
-  }
+  const url = findImageUrl(card);
+  imageCache[key] = url || null;
+  return imageCache[key];
 }
 
 function ensurePlaceholder(parent) {
@@ -328,7 +282,6 @@ function ensurePlaceholder(parent) {
 async function loadCardImage(card) {
   const imgEl = document.getElementById('cardImg');
   if (!imgEl) return;
-
   imgEl.onload = null;
   imgEl.onerror = null;
   imgEl.removeAttribute('src');
@@ -339,7 +292,6 @@ async function loadCardImage(card) {
   ensurePlaceholder(parent);
 
   const url = await fetchCardImage(card);
-
   if (getFilteredCards()[currentIndex] !== card) return;
   if (!url) return;
 
@@ -356,7 +308,7 @@ async function loadCardImage(card) {
 }
 
 // ============================================================================
-// SÉLECTION DES FICHIERS PAR L'UTILISATEUR
+// SÉLECTION DES FICHIERS
 // ============================================================================
 async function pickCdb(type) {
   if (!supportsFS) {
@@ -368,7 +320,6 @@ async function pickCdb(type) {
       multiple: false,
       types: [{ description: 'CDB SQLite', accept: { 'application/x-sqlite3': ['.cdb'] } }]
     });
-
     try {
       const file = await h.getFile();
       const header = new TextDecoder().decode((await file.slice(0, 16).arrayBuffer()));
@@ -376,10 +327,7 @@ async function pickCdb(type) {
         setGlobalStatus('Ce fichier n\'est pas un .cdb valide.', false);
         return;
       }
-    } catch (e) {
-      /* on continue quand même */
-    }
-
+    } catch (e) {}
     if (type === 'source') {
       sourceFileHandle = h;
       document.getElementById('cardSource').classList.add('picked');
@@ -390,7 +338,6 @@ async function pickCdb(type) {
       document.getElementById('cardTrad').classList.add('picked');
       document.getElementById('subTrad').textContent = h.name;
     }
-
     document.getElementById('startBtn').disabled = !sourceFileHandle;
   } catch (e) {
     if (e.name !== 'AbortError') console.error(e);
@@ -420,7 +367,7 @@ function createEmptyFrDb(SQL) {
 }
 
 // ============================================================================
-// DÉMARRAGE DE L'APP
+// DÉMARRAGE
 // ============================================================================
 async function startApp() {
   if (!sourceFileHandle) {
@@ -438,6 +385,7 @@ async function startApp() {
 
     lt.textContent = 'Chargement des images…';
     await loadLocalDatabases();
+    buildImageIndex();
 
     lt.textContent = 'Initialisation de SQLite…';
     const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
@@ -463,14 +411,9 @@ async function startApp() {
     const sourceCards = extractCards(sourceDb);
     const tradCards = extractCards(frDb);
     CARDS = mergeCards(sourceCards, tradCards);
-
     sourceDb.close();
 
-    const missingFr = CARDS.filter(c => c.missingFr).length;
-    const missingEn = CARDS.filter(c => c.missingEn).length;
     console.log(`✅ ${CARDS.length} cartes chargées`);
-    console.log(`   • ${missingFr} sans traduction`);
-    console.log(`   • ${missingEn} sans original`);
 
     document.getElementById('loadingScreen').style.display = 'none';
     document.getElementById('appScreen').style.display = 'block';
@@ -511,19 +454,14 @@ function extractCards(db) {
 }
 
 // ============================================================================
-// FUSION — avec détection des orphelines
+// FUSION
 // ============================================================================
 function mergeCards(sourceCards, tradCards) {
   const result = [];
-  const sourceOnly = [];
-  const tradOnly = [];
-
   for (const id in sourceCards) {
     const en = sourceCards[id];
     const fr = tradCards[id];
-
     if (!fr) {
-      sourceOnly.push({ id, name: en.name });
       result.push({
         id: en.id,
         name_en: en.name, desc_en: en.desc,
@@ -537,10 +475,8 @@ function mergeCards(sourceCards, tradCards) {
       });
       continue;
     }
-
     const name_fr = normalizeNewlines(fr.name);
     const desc_fr = normalizeNewlines(fr.desc);
-
     result.push({
       id: en.id,
       name_en: en.name, desc_en: en.desc,
@@ -552,15 +488,11 @@ function mergeCards(sourceCards, tradCards) {
       edited: false,
     });
   }
-
   for (const id in tradCards) {
     if (sourceCards[id]) continue;
     const fr = tradCards[id];
-    tradOnly.push({ id, name: fr.name });
-
     const name_fr = normalizeNewlines(fr.name);
     const desc_fr = normalizeNewlines(fr.desc);
-
     result.push({
       id: fr.id,
       name_en: '', desc_en: '',
@@ -573,13 +505,6 @@ function mergeCards(sourceCards, tradCards) {
       missingEn: true,
     });
   }
-
-  if (sourceOnly.length) console.warn(`⚠️ ${sourceOnly.length} carte(s) sans traduction`);
-  if (tradOnly.length) console.warn(`⚠️ ${tradOnly.length} carte(s) traduites sans original`);
-  if (!sourceOnly.length && !tradOnly.length && Object.keys(sourceCards).length && Object.keys(tradCards).length) {
-    console.log('✅ Aucune carte orpheline');
-  }
-
   result.sort((a, b) => parseInt(a.id) - parseInt(b.id));
   return result;
 }
@@ -592,36 +517,28 @@ function render() {
   const filtered = getFilteredCards();
 
   if (!filtered.length) {
-    document.getElementById('infoId').textContent = '—';
-    document.getElementById('infoType').textContent = '—';
-    document.getElementById('infoAttr').textContent = '—';
-    document.getElementById('infoStats').textContent = '—';
-    document.getElementById('infoLevel').textContent = '—';
+    ['infoId','infoType','infoAttr','infoStats','infoLevel'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = '—';
+    });
     document.getElementById('infoStatus').textContent = 'Aucune carte';
     document.getElementById('origName').textContent = '—';
     document.getElementById('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
-
     const imgEl = document.getElementById('cardImg');
     if (imgEl) {
-      imgEl.onload = null;
-      imgEl.onerror = null;
-      imgEl.removeAttribute('src');
-      imgEl.style.display = 'none';
+      imgEl.onload = null; imgEl.onerror = null;
+      imgEl.removeAttribute('src'); imgEl.style.display = 'none';
       ensurePlaceholder(imgEl.parentElement);
     }
-
     const nameEl = document.getElementById('editNameFr');
     const descEl = document.getElementById('editDescFr');
     if (nameEl) { nameEl.value = ''; nameEl.disabled = true; }
     if (descEl) { descEl.value = ''; descEl.disabled = true; }
-
     const tagsEl = document.getElementById('transTags');
     if (tagsEl) tagsEl.innerHTML = '';
     const mb = document.getElementById('missingBadge');
     if (mb) mb.style.display = 'none';
     const modb = document.getElementById('modifiedBadge');
     if (modb) modb.style.display = 'none';
-
     document.getElementById('navCenter').textContent = '0 / 0';
     document.getElementById('prevBtn').disabled = true;
     document.getElementById('nextBtn').disabled = true;
@@ -650,7 +567,6 @@ function render() {
 
   document.getElementById('origName').textContent = card.name_en || '—';
   document.getElementById('origDesc').textContent = card.desc_en || '—';
-
   document.getElementById('editNameFr').value = card.name_fr || '';
   document.getElementById('editDescFr').value = card.desc_fr || '';
 
@@ -694,23 +610,16 @@ function updateModifiedCount() {
   val.textContent = String(n);
   wrap.style.display = n > 0 ? '' : 'none';
 }
-
 function hasUnsavedChanges() {
   const nameEl = document.getElementById('editNameFr');
   const descEl = document.getElementById('editDescFr');
   if (!nameEl || !descEl) return false;
-
   const f = getFilteredCards();
   const card = f[currentIndex];
   if (!card) return false;
-
-  const name = nameEl.value;
-  const desc = descEl.value;
-
-  return name !== (card.name_fr || '')
-      || normalizeNewlines(desc) !== normalizeNewlines(card.desc_fr);
+  return nameEl.value !== (card.name_fr || '')
+      || normalizeNewlines(descEl.value) !== normalizeNewlines(card.desc_fr);
 }
-
 function confirmDiscardIfDirty() {
   if (!dirty) return true;
   return confirm('Modifications non enregistrées sur cette carte. Continuer et les perdre ?');
@@ -726,7 +635,6 @@ async function ensureFileHandle() {
     const req = await tradFileHandle.requestPermission({ mode: 'readwrite' });
     return req === 'granted';
   }
-
   try {
     const h = await window.showSaveFilePicker({
       suggestedName: 'VAACT_S1_fr.cdb',
@@ -744,7 +652,6 @@ async function ensureFileHandle() {
     return false;
   }
 }
-
 async function writeCdbToDisk() {
   if (!frDb || !tradFileHandle) return;
   const data = frDb.export();
@@ -752,12 +659,10 @@ async function writeCdbToDisk() {
   await w.write(data);
   await w.close();
 }
-
 function updateDbForCard(card, name_fr, desc_fr) {
   if (!frDb) return;
   const idNum = parseInt(card.id, 10);
   if (!Number.isFinite(idNum)) return;
-
   const cols = ['id', 'name', 'desc'];
   const vals = [idNum, name_fr, desc_fr];
   for (let i = 1; i <= 16; i++) { cols.push('str' + i); vals.push(''); }
@@ -765,7 +670,6 @@ function updateDbForCard(card, name_fr, desc_fr) {
   const sql = `INSERT OR REPLACE INTO texts (${cols.join(',')}) VALUES (${placeholders})`;
   frDb.run(sql, vals);
 }
-
 function deleteDbCard(card) {
   if (!frDb) return;
   const idNum = parseInt(card.id, 10);
@@ -774,7 +678,7 @@ function deleteDbCard(card) {
 }
 
 // ============================================================================
-// ÉDITION INLINE
+// ÉDITION
 // ============================================================================
 async function saveCurrentCard() {
   const f = getFilteredCards();
@@ -786,13 +690,8 @@ async function saveCurrentCard() {
   const desc_fr = document.getElementById('editDescFr').value;
 
   let ok;
-  try {
-    ok = await ensureFileHandle();
-  } catch (e) {
-    console.error(e);
-    setSaveStatus('❌ Erreur accès fichier : ' + e.message, false);
-    return;
-  }
+  try { ok = await ensureFileHandle(); }
+  catch (e) { setSaveStatus('❌ Erreur accès fichier : ' + e.message, false); return; }
   if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
 
   updateDbForCard(card, name_fr, desc_fr);
@@ -810,22 +709,16 @@ async function saveCurrentCard() {
   try {
     await writeCdbToDisk();
     setSaveStatus(`💾 Enregistré dans ${tradFileName || 'nouveau fichier'}`, true);
-  } catch (e) {
-    console.error(e);
-    setSaveStatus('❌ Erreur écriture : ' + e.message, false);
-    return;
-  }
+  } catch (e) { setSaveStatus('❌ Erreur écriture : ' + e.message, false); return; }
 
   renderTags(card.desc_fr);
   document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
-
   const mb = document.getElementById('missingBadge');
   if (mb) {
     if (card.missingFr) { mb.textContent = '⚠️ Traduction manquante'; mb.style.display = ''; }
     else if (card.missingEn) { mb.textContent = '⚠️ Original manquant'; mb.style.display = ''; }
     else mb.style.display = 'none';
   }
-
   document.getElementById('infoStatus').textContent =
     card.missingFr ? '⚠️ À traduire' :
     card.missingEn ? '⚠️ Orpheline' :
@@ -842,45 +735,30 @@ async function resetCurrentCard() {
 
   if (card.missingFr) {
     if ((card.name_fr || card.desc_fr) && !confirm('Vider cette traduction ?')) return;
-
     let ok;
-    try {
-      ok = await ensureFileHandle();
-    } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
+    try { ok = await ensureFileHandle(); }
+    catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
     if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
-
-    card.name_fr = '';
-    card.desc_fr = '';
-    card.edited = false;
+    card.name_fr = ''; card.desc_fr = ''; card.edited = false;
     deleteDbCard(card);
-
-    try {
-      await writeCdbToDisk();
-      setSaveStatus('↺ Traduction supprimée', true);
-    } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
+    try { await writeCdbToDisk(); setSaveStatus('↺ Traduction supprimée', true); }
+    catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
     render();
     return;
   }
 
   if (card.edited && !confirm('Réinitialiser cette carte à sa traduction d\'origine ?')) return;
-
   let ok;
-  try {
-    ok = await ensureFileHandle();
-  } catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
+  try { ok = await ensureFileHandle(); }
+  catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
   if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
 
   card.name_fr = card.name_fr_orig;
   card.desc_fr = card.desc_fr_orig;
   card.edited = false;
   updateDbForCard(card, card.name_fr, card.desc_fr);
-
-  try {
-    await writeCdbToDisk();
-    setSaveStatus('↺ Réinitialisé', true);
-  } catch (e) {
-    setSaveStatus('❌ Erreur : ' + e.message, false);
-  }
+  try { await writeCdbToDisk(); setSaveStatus('↺ Réinitialisé', true); }
+  catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
   render();
 }
 
@@ -1145,7 +1023,6 @@ function toggleTheme() {
   const next = cur === 'dark' ? 'light' : 'dark';
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
-
   const card = getFilteredCards()[currentIndex];
   if (card) renderTags(card.desc_fr);
 }
