@@ -197,7 +197,7 @@ function updateFiltersBadge() {
 // IMAGES — bases locales (partagées avec le Vérif) → cache → API YGOPRODeck
 // ============================================================================
 // Bases d'images partagées avec le site Vérif (une seule copie à maintenir)
-const DATA_BASE = 'https://kevinraphael95.github.io/vaact_verif_traduction/data/';
+const DATA_BASE = 'https://kevinraphael95.github.io/ygo_outil_fr/data/';
 let localCardsDb = null;
 let localYugiDb = null;
 let nameIndex = null; // nom normalisé → URL image
