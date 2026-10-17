@@ -1123,6 +1123,16 @@ $('resetCardBtn').addEventListener('click', resetCurrentCard);
 $('typeToggleFr').addEventListener('click', () => {
   $('typePanelFr').classList.toggle('open');
 });
+// La liste des types se ferme quand on clique ailleurs ou qu'on appuie sur Échap
+document.addEventListener('click', (e) => {
+  const panel = $('typePanelFr');
+  if (!panel.classList.contains('open')) return;
+  if (panel.contains(e.target) || $('typeToggleFr').contains(e.target)) return;
+  panel.classList.remove('open');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('typePanelFr').classList.remove('open');
+});
 $('typePanelFr').addEventListener('change', () => {
   let sum = 0;
   $('typePanelFr').querySelectorAll('input:checked').forEach(cb => { sum |= Number(cb.dataset.v); });
