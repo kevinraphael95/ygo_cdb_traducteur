@@ -560,6 +560,15 @@ body.has-nav { padding-bottom: 80px; }
 .btn-theme:hover { border-color: #4a7fd6; background: #f7f8fa; }
 
 /* ============================================================================
+   ICÔNE DU BOUTON THÈME — gérée en CSS (évite le flash au chargement)
+   ============================================================================ */
+[data-theme="dark"]  #themeToggle::before,
+[data-theme="dark"]  #themeToggleWelcome::before { content: "☀️"; }
+
+[data-theme="light"] #themeToggle::before,
+[data-theme="light"] #themeToggleWelcome::before { content: "🌙"; }
+
+/* ============================================================================
    LAYOUT — 3 colonnes : original | textes | traduction
    ============================================================================ */
 .container { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
