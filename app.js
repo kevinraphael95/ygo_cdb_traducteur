@@ -1371,11 +1371,6 @@ const THEME_KEY = 'cdb-translator-theme';
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
-  const icon = t === 'dark' ? '☀️' : '🌙';
-  const btn = $('themeToggle');
-  if (btn) btn.textContent = icon;
-  const btnW = $('themeToggleWelcome');
-  if (btnW) btnW.textContent = icon;
 }
 
 function toggleTheme() {
