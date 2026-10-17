@@ -127,7 +127,9 @@
   <div class="container" id="mainContainer">
     <div class="main-grid">
 
+      <!-- Colonne gauche : original (source) — image puis infos -->
       <div class="card-visual">
+        <div class="card-visual-title">Original</div>
         <div class="card-image">
           <img id="cardImg" alt="">
         </div>
@@ -135,12 +137,13 @@
           <div class="info-row"><span class="label">ID</span><span class="value" id="infoId">—</span></div>
           <div class="info-row"><span class="label">Type</span><span class="value" id="infoType">—</span></div>
           <div class="info-row"><span class="label">Attribut</span><span class="value" id="infoAttr">—</span></div>
+          <div class="info-row"><span class="label">Race</span><span class="value" id="infoRace">—</span></div>
           <div class="info-row"><span class="label">ATK / DEF</span><span class="value" id="infoStats">—</span></div>
           <div class="info-row"><span class="label">Niveau</span><span class="value" id="infoLevel">—</span></div>
-          <div class="info-row"><span class="label">Statut</span><span class="value" id="infoStatus">—</span></div>
         </div>
       </div>
 
+      <!-- Colonne centrale : textes -->
       <div class="content-col">
         <div class="section">
           <div class="section-title">📖 Texte original</div>
@@ -180,13 +183,57 @@
           <div class="global-actions">
             <span class="save-status" id="globalStatus" role="status" aria-live="polite"></span>
           </div>
-          <p style="font-size:12px;color:#888;margin-top:8px;line-height:1.5;">
+          <p class="help-text">
             Le bouton <strong>💾 Enregistrer</strong> (ou <kbd>Ctrl</kbd>+<kbd>S</kbd>) écrit <strong>directement</strong>
-            dans ton fichier de traduction.<br>
+            dans ton fichier de traduction : le nom, la description et, si tu les as modifiées,
+            les infos de la carte (type, attribut, race, ATK/DEF, niveau).<br>
             Si tu n'en as pas fourni au démarrage, une fenêtre te proposera d'en <strong>créer un nouveau</strong> au 1er enregistrement.<br>
             <em>Nécessite Chrome, Edge ou Opera.</em>
           </p>
         </div>
+      </div>
+
+      <!-- Colonne droite : traduction (FR) — image puis infos ÉDITABLES -->
+      <div class="card-visual">
+        <div class="card-visual-title">Traduction (FR)</div>
+        <div class="card-image">
+          <img id="cardImgFr" alt="">
+        </div>
+        <div class="card-info">
+          <div class="info-row"><span class="label">ID</span><span class="value" id="infoIdFr">—</span></div>
+
+          <div class="info-row has-control">
+            <span class="label">Type</span>
+            <button type="button" class="info-ctl type-btn" id="typeToggleFr" aria-label="Modifier le type">—</button>
+          </div>
+          <div class="type-panel" id="typePanelFr"></div>
+
+          <div class="info-row has-control">
+            <span class="label">Attribut</span>
+            <select class="info-ctl" id="attrSelFr" aria-label="Attribut"></select>
+          </div>
+
+          <div class="info-row has-control">
+            <span class="label">Race</span>
+            <select class="info-ctl" id="raceSelFr" aria-label="Race"></select>
+          </div>
+
+          <div class="info-row has-control">
+            <span class="label">ATK / DEF</span>
+            <span class="stat-pair">
+              <input type="text" class="info-ctl" id="atkInputFr" inputmode="numeric" autocomplete="off" aria-label="ATK (? pour inconnu)">
+              <input type="text" class="info-ctl" id="defInputFr" inputmode="numeric" autocomplete="off" aria-label="DEF (? pour inconnu)">
+            </span>
+          </div>
+
+          <div class="info-row has-control">
+            <span class="label">Niveau</span>
+            <input type="number" class="info-ctl" id="levelInputFr" min="0" max="255" step="1" autocomplete="off" aria-label="Niveau / rang / valeur Lien">
+          </div>
+
+          <div class="info-row"><span class="label">Statut</span><span class="value" id="infoStatus">—</span></div>
+        </div>
+        <div class="card-visual-hint" id="infoFrHint" style="display:none;"></div>
       </div>
 
     </div>
