@@ -4,6 +4,9 @@
 // Éditeur de fichiers .cdb (SQLite) pour jeux Yu-Gi-Oh!
 //   • Chargement des fichiers par l'utilisateur (aucun upload serveur)
 //   • Édition des traductions (nom + description)
+//   • 🆕 Édition des infos de la carte traduite (type, attribut, race,
+//        ATK/DEF, niveau) → écrites dans la table `datas` du .cdb traduit
+//   • 🆕 Trois colonnes : original (gauche) | textes (centre) | traduction (droite)
 //   • Écriture directe dans le .cdb via File System Access API
 //   • Filtres : cartes taguées, incomplètes, mots-clés personnalisés
 //   • Badges auto [XXX] détectés dans les descriptions
@@ -29,11 +32,17 @@ const CUSTOM_KEYWORDS_LS = 'cdb-translator-keywords';
 const IMAGE_FETCH_TIMEOUT_MS = 8000;
 const IMAGE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// État du formulaire d'infos (bloc de droite)
+const LINK_BIT = 0x4000000;
+let KNOWN_TYPE_MASK = 0;   // OU de tous les bits connus dans cardinfo
+let formType = 0;          // valeur courante de la colonne `type`
+let formTypeExtra = 0;     // bits de type inconnus de cardinfo (conservés tels quels)
+let formLevelHigh = 0;     // bits hauts du level (échelles Pendule), conservés tels quels
+let formDefBase = 0;       // valeur brute de `def` (flèches Lien : non éditable)
+
 // ============================================================================
 // SOURCES DE DONNÉES (repo ygo_outil_fr)
 // ============================================================================
-// Toutes les données (cardinfo + JSON d'images) sont dans data/ du repo
-// ygo_outil_fr. Une seule copie à maintenir, partagée avec le Vérif.
 const DATA_BASE = 'https://kevinraphael95.github.io/ygo_outil_fr/data/';
 const CARDINFO_URL = DATA_BASE + 'cardinfo_fr.txt';
 const CARDS_DB_JSON = DATA_BASE + 'cards-db.json';
@@ -49,6 +58,8 @@ const YUGI_DB_JSON = DATA_BASE + 'yugipedia-db.json';
 function saveCustomKeywords() {
   try { localStorage.setItem(CUSTOM_KEYWORDS_LS, JSON.stringify(customKeywords)); } catch {}
 }
+
+const $ = (id) => document.getElementById(id);
 
 // ============================================================================
 // CODES YGOPRO (chargés depuis cardinfo_fr.txt)
@@ -91,6 +102,7 @@ async function loadCardInfo(url) {
 }
 
 function attributeToString(a) { return a ? (ATTRIBUTES[a] || `Attr${a}`) : '—'; }
+function raceToString(r) { return r ? (RACES[r] || `Race${r}`) : '—'; }
 
 function typeToString(t) {
   if (!t) return '—';
@@ -108,6 +120,57 @@ function formatStat(v) {
 
 function normalizeNewlines(s) {
   return String(s || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+// ============================================================================
+// INFOS DE CARTE (type, attribut, race, ATK, DEF, niveau)
+// ============================================================================
+const ZERO_INFO = { type: 0, atk: 0, def: 0, level: 0, race: 0, attribute: 0 };
+
+function cloneInfo(i) {
+  const s = i || ZERO_INFO;
+  return {
+    type: s.type ?? 0, atk: s.atk ?? 0, def: s.def ?? 0,
+    level: s.level ?? 0, race: s.race ?? 0, attribute: s.attribute ?? 0,
+  };
+}
+
+// Égalité stricte (utilisée pour savoir si le formulaire a été modifié)
+function infoEqual(a, b) {
+  if (!a || !b) return false;
+  return a.type === b.type && a.attribute === b.attribute && a.race === b.race
+      && a.atk === b.atk && a.def === b.def && a.level === b.level;
+}
+
+// Différences EN / FR : renvoie la liste des champs qui diffèrent
+// (le niveau est comparé sans les bits d'échelle Pendule)
+function infoDiffKeys(en, fr) {
+  if (!en || !fr) return [];
+  const out = [];
+  if (en.type !== fr.type) out.push('type');
+  if (en.attribute !== fr.attribute) out.push('attribute');
+  if (en.race !== fr.race) out.push('race');
+  if (en.atk !== fr.atk) out.push('atk');
+  if (en.def !== fr.def) out.push('def');
+  if ((en.level & 0xff) !== (fr.level & 0xff)) out.push('level');
+  return out;
+}
+
+function statToInput(v) {
+  if (v === null || v === undefined) return '';
+  if (v === -2 || v === -1) return '?';
+  return String(v);
+}
+
+// Convertit le texte saisi en valeur brute. Si le texte n'a pas changé par
+// rapport à l'affichage de la valeur d'origine, on garde l'original tel quel
+// (ex. -1 reste -1 au lieu de devenir -2).
+function parseStatKeep(text, orig) {
+  const t = String(text || '').trim();
+  if (t === statToInput(orig)) return orig ?? 0;
+  if (t === '?') return -2;
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) ? n : 0;
 }
 
 // ============================================================================
@@ -133,7 +196,7 @@ function tagHue(tag) {
 }
 
 function renderTags(descFr) {
-  const container = document.getElementById('transTags');
+  const container = $('transTags');
   if (!container) return;
   const tags = extractTags(descFr);
   if (!tags.length) { container.innerHTML = ''; return; }
@@ -154,8 +217,8 @@ function isIncompleteCard(card) { return card.missingFr === true || card.missing
 
 function getFilterState() {
   return {
-    vaact: !!document.getElementById('filterVaact')?.checked,
-    incomplete: !!document.getElementById('filterIncomplete')?.checked,
+    vaact: !!$('filterVaact')?.checked,
+    incomplete: !!$('filterIncomplete')?.checked,
     keywords: customKeywords,
   };
 }
@@ -180,8 +243,10 @@ function getFilteredCards() {
   }
   return list;
 }
+function currentCard() { return getFilteredCards()[currentIndex]; }
+
 function updateFiltersBadge() {
-  const btn = document.getElementById('filtersBtn');
+  const btn = $('filtersBtn');
   if (!btn) return;
   const count = countActiveFilters();
   btn.classList.toggle('active', count > 0);
@@ -202,8 +267,7 @@ let localCardsDb = null;
 let localYugiDb = null;
 
 // Délai avant de lancer le chargement d'une image : si on change de carte
-// avant la fin du délai, la demande est annulée (évite les 429 de Yugipedia
-// quand on enchaîne Suivant / Aléatoire).
+// avant la fin du délai, la demande est annulée.
 const IMAGE_LOAD_DELAY_MS = 150;
 let imageTimer = null;
 
@@ -285,37 +349,43 @@ function ensurePlaceholder(parent) {
   return ph;
 }
 
-async function loadCardImage(card) {
-  const imgEl = document.getElementById('cardImg');
-  if (!imgEl) return;
+// L'image est affichée dans les DEUX blocs (original à gauche, traduction à droite).
+const CARD_IMG_IDS = ['cardImg', 'cardImgFr'];
 
-  // Annule la demande précédente si elle n'est pas encore partie
-  clearTimeout(imageTimer);
-
+function resetCardImg(imgEl, card) {
   imgEl.onload = null;
   imgEl.onerror = null;
   imgEl.removeAttribute('src');
   imgEl.style.display = 'none';
   imgEl.alt = card?.name_fr || card?.name_en || 'Carte';
+  ensurePlaceholder(imgEl.parentElement);
+}
 
-  const parent = imgEl.parentElement;
-  ensurePlaceholder(parent);
+async function loadCardImage(card) {
+  const imgs = CARD_IMG_IDS.map(id => $(id)).filter(Boolean);
+  if (!imgs.length) return;
+
+  clearTimeout(imageTimer);
+  imgs.forEach(imgEl => resetCardImg(imgEl, card));
 
   imageTimer = setTimeout(async () => {
     const url = await fetchCardImage(card);
-    if (getFilteredCards()[currentIndex] !== card) return;
+    if (currentCard() !== card) return;
     if (!url) return;
 
-    imgEl.onload = () => {
-      const ph = parent.querySelector('.img-placeholder');
-      if (ph) ph.remove();
-      imgEl.style.display = 'block';
-    };
-    imgEl.onerror = () => {
-      imgEl.removeAttribute('src');
-      imgEl.style.display = 'none';
-    };
-    imgEl.src = url;
+    imgs.forEach(imgEl => {
+      const parent = imgEl.parentElement;
+      imgEl.onload = () => {
+        const ph = parent.querySelector('.img-placeholder');
+        if (ph) ph.remove();
+        imgEl.style.display = 'block';
+      };
+      imgEl.onerror = () => {
+        imgEl.removeAttribute('src');
+        imgEl.style.display = 'none';
+      };
+      imgEl.src = url;
+    });
   }, IMAGE_LOAD_DELAY_MS);
 }
 
@@ -342,15 +412,15 @@ async function pickCdb(type) {
     } catch (e) {}
     if (type === 'source') {
       sourceFileHandle = h;
-      document.getElementById('cardSource').classList.add('picked');
-      document.getElementById('subSource').textContent = h.name;
+      $('cardSource').classList.add('picked');
+      $('subSource').textContent = h.name;
     } else {
       tradFileHandle = h;
       tradFileName = h.name;
-      document.getElementById('cardTrad').classList.add('picked');
-      document.getElementById('subTrad').textContent = h.name;
+      $('cardTrad').classList.add('picked');
+      $('subTrad').textContent = h.name;
     }
-    document.getElementById('startBtn').disabled = !sourceFileHandle;
+    $('startBtn').disabled = !sourceFileHandle;
   } catch (e) {
     if (e.name !== 'AbortError') console.error(e);
   }
@@ -359,6 +429,13 @@ async function pickCdb(type) {
 // ============================================================================
 // CRÉATION D'UNE BASE FR VIDE
 // ============================================================================
+const DATAS_SCHEMA = `CREATE TABLE IF NOT EXISTS datas (
+    id integer primary key,
+    ot integer, alias integer, setcode integer,
+    type integer, atk integer, def integer, level integer,
+    race integer, attribute integer, category integer
+  )`;
+
 function createEmptyFrDb(SQL) {
   const db = new SQL.Database();
   db.run(`CREATE TABLE texts (
@@ -369,12 +446,7 @@ function createEmptyFrDb(SQL) {
     str9 text, str10 text, str11 text, str12 text,
     str13 text, str14 text, str15 text, str16 text
   )`);
-  db.run(`CREATE TABLE datas (
-    id integer primary key,
-    ot integer, alias integer, setcode integer,
-    type integer, atk integer, def integer, level integer,
-    race integer, attribute integer, category integer
-  )`);
+  db.run(DATAS_SCHEMA);
   return db;
 }
 
@@ -387,13 +459,14 @@ async function startApp() {
     return;
   }
 
-  const lt = document.getElementById('loadingText');
-  document.getElementById('loadingScreen').style.display = 'flex';
-  document.getElementById('welcomeScreen').style.display = 'none';
+  const lt = $('loadingText');
+  $('loadingScreen').style.display = 'flex';
+  $('welcomeScreen').style.display = 'none';
 
   try {
     lt.textContent = 'Chargement du cardinfo…';
     await loadCardInfo(CARDINFO_URL);
+    buildInfoControls();
 
     lt.textContent = 'Chargement des images…';
     await loadLocalDatabases();
@@ -427,8 +500,8 @@ async function startApp() {
 
     console.log(`✅ ${CARDS.length} cartes chargées`);
 
-    document.getElementById('loadingScreen').style.display = 'none';
-    document.getElementById('appScreen').style.display = 'block';
+    $('loadingScreen').style.display = 'none';
+    $('appScreen').style.display = 'block';
     document.body.classList.add('has-nav');
     updateTopbarHeight();
 
@@ -439,28 +512,48 @@ async function startApp() {
   } catch (err) {
     console.error('❌', err);
     setGlobalStatus('Erreur de chargement : ' + err.message, false);
-    document.getElementById('loadingScreen').style.display = 'none';
-    document.getElementById('welcomeScreen').style.display = 'flex';
+    $('loadingScreen').style.display = 'none';
+    $('welcomeScreen').style.display = 'flex';
   }
 }
 
 // ============================================================================
 // EXTRACTION
 // ============================================================================
+// Renvoie, pour chaque id : texte (name, desc), `data` (type, atk, def, level,
+// race, attribute — null si pas de ligne dans `datas`) et `extra` (colonnes
+// qu'on ne modifie pas : ot, alias, setcode, category).
 function extractCards(db) {
   const t = db.exec("SELECT id, name, desc FROM texts")[0];
   if (!t) return {};
-  let d;
-  try { d = db.exec("SELECT id, type, atk, def, level, race, attribute FROM datas")[0]; }
-  catch { d = null; }
+
+  let d = null;
+  try { d = db.exec("SELECT * FROM datas")[0]; } catch { d = null; }
+
   const dById = {};
-  if (d) for (const row of d.values) dById[String(row[0])] = {
-    type: row[1], atk: row[2], def: row[3], level: row[4], race: row[5], attribute: row[6]
-  };
+  if (d) {
+    const ci = {};
+    d.columns.forEach((c, i) => { ci[c] = i; });
+    for (const row of d.values) {
+      const g = (k) => (k in ci ? row[ci[k]] : null);
+      dById[String(row[ci.id])] = {
+        data: {
+          type: g('type') ?? 0, atk: g('atk') ?? 0, def: g('def') ?? 0,
+          level: g('level') ?? 0, race: g('race') ?? 0, attribute: g('attribute') ?? 0,
+        },
+        extra: { ot: g('ot'), alias: g('alias'), setcode: g('setcode'), category: g('category') },
+      };
+    }
+  }
+
   const out = {};
   for (const [id, name, desc] of t.values) {
     const k = String(id);
-    out[k] = { id: k, name: name || '', desc: desc || '', ...(dById[k] || {}) };
+    out[k] = {
+      id: k, name: name || '', desc: desc || '',
+      data: dById[k]?.data || null,
+      extra: dById[k]?.extra || null,
+    };
   }
   return out;
 }
@@ -468,20 +561,32 @@ function extractCards(db) {
 // ============================================================================
 // FUSION
 // ============================================================================
+// Pour chaque carte :
+//   en_data         infos de l'original (null si la carte n'existe que côté FR)
+//   fr_info         infos « effectives » de la traduction (ce qu'affiche le bloc droit)
+//                   = ligne `datas` du .cdb traduit, sinon copie de l'original
+//   fr_info_orig    ligne `datas` d'origine du .cdb traduit (null s'il n'y en avait pas)
+//   fr_info_base    référence pour savoir si les infos ont été éditées
+//   has_fr_datas    true si le .cdb traduit contient une ligne `datas` pour cette carte
 function mergeCards(sourceCards, tradCards) {
   const result = [];
   for (const id in sourceCards) {
     const en = sourceCards[id];
     const fr = tradCards[id];
+    const en_data = en.data ? cloneInfo(en.data) : null;
+    const frData = fr && fr.data ? cloneInfo(fr.data) : null;
+    const fr_info = frData ? cloneInfo(frData) : cloneInfo(en_data);
+    const fr_info_base = frData ? cloneInfo(frData) : cloneInfo(en_data);
+
     if (!fr) {
       result.push({
         id: en.id,
         name_en: en.name, desc_en: en.desc,
         name_fr: '', desc_fr: '',
         name_fr_orig: '', desc_fr_orig: '',
-        type: en.type || '',
-        atk: en.atk ?? null, def: en.def ?? null, level: en.level ?? null,
-        attribute: en.attribute || '',
+        en_data, fr_info, fr_info_orig: null, fr_info_base,
+        has_fr_datas: false,
+        src_extra: en.extra, fr_extra: null,
         edited: false,
         missingFr: true,
       });
@@ -494,9 +599,9 @@ function mergeCards(sourceCards, tradCards) {
       name_en: en.name, desc_en: en.desc,
       name_fr, desc_fr,
       name_fr_orig: name_fr, desc_fr_orig: desc_fr,
-      type: en.type || fr.type || '',
-      atk: en.atk ?? null, def: en.def ?? null, level: en.level ?? null,
-      attribute: en.attribute || fr.attribute || '',
+      en_data, fr_info, fr_info_orig: frData ? cloneInfo(frData) : null, fr_info_base,
+      has_fr_datas: !!frData,
+      src_extra: en.extra, fr_extra: fr.extra,
       edited: false,
     });
   }
@@ -505,20 +610,170 @@ function mergeCards(sourceCards, tradCards) {
     const fr = tradCards[id];
     const name_fr = normalizeNewlines(fr.name);
     const desc_fr = normalizeNewlines(fr.desc);
+    const frData = fr.data ? cloneInfo(fr.data) : null;
     result.push({
       id: fr.id,
       name_en: '', desc_en: '',
       name_fr, desc_fr,
       name_fr_orig: name_fr, desc_fr_orig: desc_fr,
-      type: fr.type || '',
-      atk: fr.atk ?? null, def: fr.def ?? null, level: fr.level ?? null,
-      attribute: fr.attribute || '',
+      en_data: null,
+      fr_info: cloneInfo(frData), fr_info_orig: frData ? cloneInfo(frData) : null,
+      fr_info_base: cloneInfo(frData),
+      has_fr_datas: !!frData,
+      src_extra: null, fr_extra: fr.extra,
       edited: false,
       missingEn: true,
     });
   }
   result.sort((a, b) => parseInt(a.id) - parseInt(b.id));
   return result;
+}
+
+// ============================================================================
+// FORMULAIRE D'INFOS (bloc de droite)
+// ============================================================================
+function buildInfoControls() {
+  KNOWN_TYPE_MASK = TYPES.reduce((m, t) => m | t.v, 0);
+
+  $('typePanelFr').innerHTML = TYPES.map(t =>
+    `<label class="type-opt"><input type="checkbox" data-v="${t.v}"><span>${esc(t.label)}</span></label>`
+  ).join('');
+
+  const optionsOf = (map) =>
+    '<option value="0">—</option>' +
+    Object.keys(map).map(Number).sort((a, b) => a - b)
+      .map(v => `<option value="${v}">${esc(map[v])}</option>`).join('');
+
+  $('attrSelFr').innerHTML = optionsOf(ATTRIBUTES);
+  $('raceSelFr').innerHTML = optionsOf(RACES);
+}
+
+// Sélectionne une valeur dans un <select>, en l'ajoutant si elle est inconnue
+function setSelectValue(sel, val, prefix) {
+  const v = String(val ?? 0);
+  if (![...sel.options].some(o => o.value === v)) {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = `${prefix}${v}`;
+    sel.appendChild(o);
+  }
+  sel.value = v;
+}
+
+function updateTypeSummary() {
+  const btn = $('typeToggleFr');
+  if (btn) btn.textContent = typeToString(formType) + ' ▾';
+}
+
+// DEF d'un monstre Lien = bitmask des flèches : non éditable ici
+function syncDefState() {
+  const defEl = $('defInputFr');
+  if (!defEl) return;
+  if ((formType & LINK_BIT) !== 0) {
+    defEl.disabled = true;
+    defEl.value = '⇗';
+    defEl.title = 'Monstre Lien : DEF = flèches (non modifiables ici)';
+  } else {
+    if (defEl.disabled) defEl.value = statToInput(formDefBase);
+    defEl.disabled = false;
+    defEl.title = '';
+  }
+}
+
+function setInfoFormDisabled(disabled) {
+  ['typeToggleFr', 'attrSelFr', 'raceSelFr', 'atkInputFr', 'defInputFr', 'levelInputFr'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = disabled;
+  });
+  if (disabled) $('typePanelFr').classList.remove('open');
+}
+
+function setInfoForm(info) {
+  const i = cloneInfo(info);
+  formType = i.type;
+  formTypeExtra = i.type & ~KNOWN_TYPE_MASK;
+  formLevelHigh = i.level & ~0xff;
+  formDefBase = i.def;
+
+  $('typePanelFr').querySelectorAll('input').forEach(cb => {
+    cb.checked = (i.type & Number(cb.dataset.v)) !== 0;
+  });
+  $('typePanelFr').classList.remove('open');
+  setSelectValue($('attrSelFr'), i.attribute, 'Attr');
+  setSelectValue($('raceSelFr'), i.race, 'Race');
+  $('atkInputFr').value = statToInput(i.atk);
+  $('defInputFr').value = statToInput(i.def);
+  $('levelInputFr').value = String(i.level & 0xff);
+
+  setInfoFormDisabled(false);
+  updateTypeSummary();
+  syncDefState();
+}
+
+function readInfoForm(card) {
+  const base = card.fr_info;
+  const lv = Math.max(0, Math.min(255, parseInt($('levelInputFr').value, 10) || 0));
+  return {
+    type: formType,
+    attribute: Number($('attrSelFr').value) || 0,
+    race: Number($('raceSelFr').value) || 0,
+    atk: parseStatKeep($('atkInputFr').value, base.atk),
+    def: $('defInputFr').disabled ? formDefBase : parseStatKeep($('defInputFr').value, base.def),
+    level: formLevelHigh | lv,
+  };
+}
+
+// Remplit le bloc de gauche (original)
+function fillLeftInfo(card) {
+  const en = card ? card.en_data : null;
+  $('infoId').textContent = card ? (card.id || '—') : '—';
+  $('infoType').textContent = en ? typeToString(en.type) : '—';
+  $('infoAttr').textContent = en ? attributeToString(en.attribute) : '—';
+  $('infoRace').textContent = en ? raceToString(en.race) : '—';
+  $('infoStats').textContent = en ? formatStat(en.atk) + ' / ' + formatStat(en.def) : '—';
+  $('infoLevel').textContent = en ? String(en.level & 0xff) : '—';
+}
+
+// Surligne en rouge les lignes qui diffèrent entre l'original et la traduction
+// (mis à jour en direct pendant la saisie)
+function updateDiffs() {
+  const card = currentCard();
+  const rows = [
+    ['infoType', 'typeToggleFr', ['type']],
+    ['infoAttr', 'attrSelFr', ['attribute']],
+    ['infoRace', 'raceSelFr', ['race']],
+    ['infoStats', 'atkInputFr', ['atk', 'def']],
+    ['infoLevel', 'levelInputFr', ['level']],
+  ];
+  let diffs = [];
+  if (card && card.en_data) diffs = infoDiffKeys(card.en_data, readInfoForm(card));
+  rows.forEach(([leftId, rightId, keys]) => {
+    const differs = keys.some(k => diffs.includes(k));
+    $(leftId).closest('.info-row').classList.toggle('diff', differs);
+    $(rightId).closest('.info-row').classList.toggle('diff', differs);
+  });
+}
+
+function statusText(card) {
+  return card.missingFr ? '⚠️ À traduire'
+       : card.missingEn ? '⚠️ Orpheline'
+       : card.edited ? '✏️ Modifiée' : '✔️ Traduite';
+}
+
+function updateInfoMeta(card) {
+  $('infoStatus').textContent = statusText(card);
+  const hint = $('infoFrHint');
+  if (hint) {
+    hint.textContent = (!card.has_fr_datas && card.en_data)
+      ? 'Valeurs héritées de l\'original — modifie un champ pour les enregistrer dans la traduction.'
+      : '';
+    hint.style.display = hint.textContent ? '' : 'none';
+  }
+}
+
+function onInfoChanged() {
+  updateDiffs();
+  markDirty();
 }
 
 // ============================================================================
@@ -529,109 +784,105 @@ function render() {
   const filtered = getFilteredCards();
 
   if (!filtered.length) {
-    ['infoId','infoType','infoAttr','infoStats','infoLevel'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.textContent = '—';
-    });
-    document.getElementById('infoStatus').textContent = 'Aucune carte';
-    document.getElementById('origName').textContent = '—';
-    document.getElementById('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
+    fillLeftInfo(null);
+    $('infoIdFr').textContent = '—';
+    $('infoStatus').textContent = 'Aucune carte';
+    $('origName').textContent = '—';
+    $('origDesc').textContent = 'Aucune carte ne correspond aux filtres actifs.';
     clearTimeout(imageTimer);
-    const imgEl = document.getElementById('cardImg');
-    if (imgEl) {
-      imgEl.onload = null; imgEl.onerror = null;
-      imgEl.removeAttribute('src'); imgEl.style.display = 'none';
-      ensurePlaceholder(imgEl.parentElement);
-    }
-    const nameEl = document.getElementById('editNameFr');
-    const descEl = document.getElementById('editDescFr');
+    CARD_IMG_IDS.forEach(id => { const el = $(id); if (el) resetCardImg(el, null); });
+    setInfoForm(ZERO_INFO);
+    setInfoFormDisabled(true);
+    updateDiffs();
+    const hint = $('infoFrHint'); if (hint) hint.style.display = 'none';
+    const nameEl = $('editNameFr');
+    const descEl = $('editDescFr');
     if (nameEl) { nameEl.value = ''; nameEl.disabled = true; }
     if (descEl) { descEl.value = ''; descEl.disabled = true; }
-    const tagsEl = document.getElementById('transTags');
+    const tagsEl = $('transTags');
     if (tagsEl) tagsEl.innerHTML = '';
-    const mb = document.getElementById('missingBadge');
+    const mb = $('missingBadge');
     if (mb) mb.style.display = 'none';
-    const modb = document.getElementById('modifiedBadge');
+    const modb = $('modifiedBadge');
     if (modb) modb.style.display = 'none';
-    document.getElementById('navCenter').textContent = '0 / 0';
-    document.getElementById('prevBtn').disabled = true;
-    document.getElementById('nextBtn').disabled = true;
+    $('navCenter').textContent = '0 / 0';
+    $('prevBtn').disabled = true;
+    $('nextBtn').disabled = true;
     return;
   }
 
-  const nameEl = document.getElementById('editNameFr');
-  const descEl = document.getElementById('editDescFr');
+  const nameEl = $('editNameFr');
+  const descEl = $('editDescFr');
   if (nameEl) nameEl.disabled = false;
   if (descEl) descEl.disabled = false;
 
   if (currentIndex >= filtered.length) currentIndex = 0;
   const card = filtered[currentIndex];
 
+  dirty = false;
   loadCardImage(card);
 
-  document.getElementById('infoId').textContent = card.id || '—';
-  document.getElementById('infoType').textContent = typeToString(card.type);
-  document.getElementById('infoAttr').textContent = attributeToString(card.attribute);
-  document.getElementById('infoStats').textContent = formatStat(card.atk) + ' / ' + formatStat(card.def);
-  document.getElementById('infoLevel').textContent = card.level ?? '—';
-  document.getElementById('infoStatus').textContent =
-    card.missingFr ? '⚠️ À traduire' :
-    card.missingEn ? '⚠️ Orpheline' :
-    card.edited ? '✏️ Modifiée' : '✔️ Traduite';
+  // Bloc gauche (original) + bloc droit (traduction)
+  fillLeftInfo(card);
+  $('infoIdFr').textContent = card.id || '—';
+  setInfoForm(card.fr_info);
+  updateDiffs();
+  updateInfoMeta(card);
 
-  document.getElementById('origName').textContent = card.name_en || '—';
-  document.getElementById('origDesc').textContent = card.desc_en || '—';
-  document.getElementById('editNameFr').value = card.name_fr || '';
-  document.getElementById('editDescFr').value = card.desc_fr || '';
+  $('origName').textContent = card.name_en || '—';
+  $('origDesc').textContent = card.desc_en || '—';
+  $('editNameFr').value = card.name_fr || '';
+  $('editDescFr').value = card.desc_fr || '';
 
   renderTags(card.desc_fr);
-  document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
+  $('modifiedBadge').style.display = card.edited ? '' : 'none';
 
-  const mb = document.getElementById('missingBadge');
+  const mb = $('missingBadge');
   if (mb) {
     if (card.missingFr) { mb.textContent = '⚠️ Traduction manquante'; mb.style.display = ''; }
     else if (card.missingEn) { mb.textContent = '⚠️ Original manquant'; mb.style.display = ''; }
     else mb.style.display = 'none';
   }
 
-  document.getElementById('navCenter').textContent = `${currentIndex + 1} / ${filtered.length}`;
-  document.getElementById('prevBtn').disabled = currentIndex === 0;
-  document.getElementById('nextBtn').disabled = currentIndex === filtered.length - 1;
+  $('navCenter').textContent = `${currentIndex + 1} / ${filtered.length}`;
+  $('prevBtn').disabled = currentIndex === 0;
+  $('nextBtn').disabled = currentIndex === filtered.length - 1;
 
   setSaveStatus('');
   updateModifiedCount();
 }
 
 function setSaveStatus(msg, ok = true) {
-  const el = document.getElementById('saveStatus');
+  const el = $('saveStatus');
   if (!el) return;
   el.textContent = msg;
   el.classList.toggle('is-error', !ok && !!msg);
   if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
 }
 function setGlobalStatus(msg, ok = true) {
-  const el = document.getElementById('globalStatus');
+  const el = $('globalStatus');
   if (!el) return;
   el.textContent = msg;
   el.classList.toggle('is-error', !ok && !!msg);
   if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3500);
 }
 function updateModifiedCount() {
-  const wrap = document.getElementById('modifiedCount');
-  const val = document.getElementById('modifiedCountValue');
+  const wrap = $('modifiedCount');
+  const val = $('modifiedCountValue');
   if (!wrap || !val) return;
   const n = CARDS.filter(c => c.edited).length;
   val.textContent = String(n);
   wrap.style.display = n > 0 ? '' : 'none';
 }
 function hasUnsavedChanges() {
-  const nameEl = document.getElementById('editNameFr');
-  const descEl = document.getElementById('editDescFr');
+  const nameEl = $('editNameFr');
+  const descEl = $('editDescFr');
   if (!nameEl || !descEl) return false;
-  const f = getFilteredCards();
-  const card = f[currentIndex];
+  const card = currentCard();
   if (!card) return false;
-  return nameEl.value !== (card.name_fr || '')
-      || normalizeNewlines(descEl.value) !== normalizeNewlines(card.desc_fr);
+  if (nameEl.value !== (card.name_fr || '')) return true;
+  if (normalizeNewlines(descEl.value) !== normalizeNewlines(card.desc_fr)) return true;
+  return !infoEqual(readInfoForm(card), card.fr_info);
 }
 function confirmDiscardIfDirty() {
   if (!dirty) return true;
@@ -655,8 +906,8 @@ async function ensureFileHandle() {
     });
     tradFileHandle = h;
     tradFileName = h.name;
-    document.getElementById('subTrad').textContent = h.name;
-    document.getElementById('cardTrad').classList.add('picked');
+    $('subTrad').textContent = h.name;
+    $('cardTrad').classList.add('picked');
     return true;
   } catch (e) {
     if (e.name === 'AbortError') return false;
@@ -671,6 +922,10 @@ async function writeCdbToDisk() {
   const w = await tradFileHandle.createWritable();
   await w.write(data);
   await w.close();
+}
+function getColumns(db, t) {
+  const r = db.exec(`PRAGMA table_info(${t})`)[0];
+  return r ? r.values.map(row => row[1]) : [];
 }
 function updateDbForCard(card, name_fr, desc_fr) {
   if (!frDb) return;
@@ -690,17 +945,61 @@ function deleteDbCard(card) {
   frDb.run("DELETE FROM texts WHERE id = ?", [idNum]);
 }
 
+// 🆕 Écrit les infos (type, atk, def, level, race, attribute) dans `datas`.
+// Si la ligne existe déjà, on ne met à jour que ces 6 colonnes (les autres
+// — ot, alias, setcode, category — sont conservées). Sinon on crée la ligne en
+// recopiant ces colonnes depuis le .cdb source.
+function updateDbDatas(card, info) {
+  if (!frDb) return;
+  const idNum = parseInt(card.id, 10);
+  if (!Number.isFinite(idNum)) return;
+  frDb.run(DATAS_SCHEMA);
+  const cols = getColumns(frDb, 'datas');
+  const vals = { type: info.type, atk: info.atk, def: info.def, level: info.level, race: info.race, attribute: info.attribute };
+
+  const exists = frDb.exec(`SELECT 1 FROM datas WHERE id = ${idNum}`)[0];
+  if (exists) {
+    const set = Object.keys(vals).filter(k => cols.includes(k));
+    frDb.run(`UPDATE datas SET ${set.map(k => k + ' = ?').join(', ')} WHERE id = ?`,
+      [...set.map(k => vals[k]), idNum]);
+  } else {
+    const ex = card.fr_extra || card.src_extra || {};
+    const all = {
+      id: idNum, ot: ex.ot ?? 0, alias: ex.alias ?? 0, setcode: ex.setcode ?? 0,
+      category: ex.category ?? 0, ...vals,
+    };
+    const use = cols.filter(c => c in all);
+    frDb.run(`INSERT INTO datas (${use.join(',')}) VALUES (${use.map(() => '?').join(',')})`,
+      use.map(c => all[c]));
+  }
+}
+function deleteDbDatas(card) {
+  if (!frDb) return;
+  const idNum = parseInt(card.id, 10);
+  if (!Number.isFinite(idNum)) return;
+  try { frDb.run("DELETE FROM datas WHERE id = ?", [idNum]); } catch (e) {}
+}
+
+// Revient aux infos « héritées » de l'original (aucune ligne `datas` côté FR)
+function inheritInfoFromOriginal(card) {
+  deleteDbDatas(card);
+  card.fr_info = cloneInfo(card.en_data);
+  card.fr_info_base = cloneInfo(card.en_data);
+  card.has_fr_datas = false;
+}
+
 // ============================================================================
 // ÉDITION
 // ============================================================================
 async function saveCurrentCard() {
-  const f = getFilteredCards();
-  const card = f[currentIndex];
+  const card = currentCard();
   if (!card) return;
   if (!supportsFS) { setSaveStatus('❌ Navigateur non compatible', false); return; }
 
-  const name_fr = document.getElementById('editNameFr').value;
-  const desc_fr = document.getElementById('editDescFr').value;
+  const name_fr = $('editNameFr').value;
+  const desc_fr = $('editDescFr').value;
+  const info = readInfoForm(card);
+  const infoChanged = !infoEqual(info, card.fr_info);
 
   let ok;
   try { ok = await ensureFileHandle(); }
@@ -711,12 +1010,20 @@ async function saveCurrentCard() {
   card.name_fr = name_fr;
   card.desc_fr = desc_fr;
 
+  if (infoChanged) {
+    updateDbDatas(card, info);
+    card.fr_info = info;
+    card.has_fr_datas = true;
+  }
+  const infoEdited = !infoEqual(card.fr_info, card.fr_info_base);
+
   if (card.missingFr) {
     if (name_fr.trim() || desc_fr.trim()) card.missingFr = false;
-    card.edited = (name_fr.trim() !== '') || (desc_fr.trim() !== '');
+    card.edited = (name_fr.trim() !== '') || (desc_fr.trim() !== '') || infoEdited;
   } else {
     card.edited = (name_fr !== card.name_fr_orig)
-               || (normalizeNewlines(desc_fr) !== normalizeNewlines(card.desc_fr_orig));
+               || (normalizeNewlines(desc_fr) !== normalizeNewlines(card.desc_fr_orig))
+               || infoEdited;
   }
 
   try {
@@ -725,35 +1032,33 @@ async function saveCurrentCard() {
   } catch (e) { setSaveStatus('❌ Erreur écriture : ' + e.message, false); return; }
 
   renderTags(card.desc_fr);
-  document.getElementById('modifiedBadge').style.display = card.edited ? '' : 'none';
-  const mb = document.getElementById('missingBadge');
+  $('modifiedBadge').style.display = card.edited ? '' : 'none';
+  const mb = $('missingBadge');
   if (mb) {
     if (card.missingFr) { mb.textContent = '⚠️ Traduction manquante'; mb.style.display = ''; }
     else if (card.missingEn) { mb.textContent = '⚠️ Original manquant'; mb.style.display = ''; }
     else mb.style.display = 'none';
   }
-  document.getElementById('infoStatus').textContent =
-    card.missingFr ? '⚠️ À traduire' :
-    card.missingEn ? '⚠️ Orpheline' :
-    card.edited ? '✏️ Modifiée' : '✔️ Traduite';
+  updateInfoMeta(card);
+  updateDiffs();
 
   dirty = false;
   updateModifiedCount();
 }
 
 async function resetCurrentCard() {
-  const f = getFilteredCards();
-  const card = f[currentIndex];
+  const card = currentCard();
   if (!card) return;
 
   if (card.missingFr) {
-    if ((card.name_fr || card.desc_fr) && !confirm('Vider cette traduction ?')) return;
+    if ((card.name_fr || card.desc_fr || card.has_fr_datas) && !confirm('Vider cette traduction ?')) return;
     let ok;
     try { ok = await ensureFileHandle(); }
     catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); return; }
     if (!ok) { setSaveStatus('⚠️ Autorisation refusée', false); return; }
     card.name_fr = ''; card.desc_fr = ''; card.edited = false;
     deleteDbCard(card);
+    inheritInfoFromOriginal(card);
     try { await writeCdbToDisk(); setSaveStatus('↺ Traduction supprimée', true); }
     catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
     render();
@@ -770,6 +1075,17 @@ async function resetCurrentCard() {
   card.desc_fr = card.desc_fr_orig;
   card.edited = false;
   updateDbForCard(card, card.name_fr, card.desc_fr);
+
+  // Infos : on remet la ligne `datas` d'origine, ou on la supprime s'il n'y en avait pas
+  if (card.fr_info_orig) {
+    card.fr_info = cloneInfo(card.fr_info_orig);
+    card.fr_info_base = cloneInfo(card.fr_info_orig);
+    updateDbDatas(card, card.fr_info);
+    card.has_fr_datas = true;
+  } else if (card.en_data) {
+    inheritInfoFromOriginal(card);
+  }
+
   try { await writeCdbToDisk(); setSaveStatus('↺ Réinitialisé', true); }
   catch (e) { setSaveStatus('❌ Erreur : ' + e.message, false); }
   render();
@@ -795,17 +1111,37 @@ function goRandom() {
   render();
 }
 
-document.getElementById('prevBtn').addEventListener('click', goPrev);
-document.getElementById('nextBtn').addEventListener('click', goNext);
-document.getElementById('randomBtn').addEventListener('click', goRandom);
-document.getElementById('saveBtn').addEventListener('click', saveCurrentCard);
-document.getElementById('resetCardBtn').addEventListener('click', resetCurrentCard);
+$('prevBtn').addEventListener('click', goPrev);
+$('nextBtn').addEventListener('click', goNext);
+$('randomBtn').addEventListener('click', goRandom);
+$('saveBtn').addEventListener('click', saveCurrentCard);
+$('resetCardBtn').addEventListener('click', resetCurrentCard);
+
+// ============================================================================
+// ÉVÉNEMENTS DU FORMULAIRE D'INFOS
+// ============================================================================
+$('typeToggleFr').addEventListener('click', () => {
+  $('typePanelFr').classList.toggle('open');
+});
+$('typePanelFr').addEventListener('change', () => {
+  let sum = 0;
+  $('typePanelFr').querySelectorAll('input:checked').forEach(cb => { sum |= Number(cb.dataset.v); });
+  formType = formTypeExtra | sum;
+  updateTypeSummary();
+  syncDefState();
+  onInfoChanged();
+});
+$('attrSelFr').addEventListener('change', onInfoChanged);
+$('raceSelFr').addEventListener('change', onInfoChanged);
+$('atkInputFr').addEventListener('input', onInfoChanged);
+$('defInputFr').addEventListener('input', onInfoChanged);
+$('levelInputFr').addEventListener('input', onInfoChanged);
 
 // ============================================================================
 // PANNEAU FILTRES
 // ============================================================================
-const filtersBtn = document.getElementById('filtersBtn');
-const filtersPanel = document.getElementById('filtersPanel');
+const filtersBtn = $('filtersBtn');
+const filtersPanel = $('filtersPanel');
 
 function openFiltersPanel() {
   if (!filtersPanel) return;
@@ -842,7 +1178,7 @@ if (filtersBtn && filtersPanel) {
 // CHECKBOXES FILTRES
 // ============================================================================
 ['filterVaact', 'filterIncomplete'].forEach(id => {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (!el) return;
   el.addEventListener('change', () => {
     if (!confirmDiscardIfDirty()) {
@@ -858,10 +1194,10 @@ if (filtersBtn && filtersPanel) {
 // ============================================================================
 // FILTRES PERSONNALISÉS
 // ============================================================================
-const customInput = document.getElementById('customKeywordInput');
-const customAddBtn = document.getElementById('customAddBtn');
-const customChips = document.getElementById('customChips');
-const customResetBtn = document.getElementById('filterResetBtn');
+const customInput = $('customKeywordInput');
+const customAddBtn = $('customAddBtn');
+const customChips = $('customChips');
+const customResetBtn = $('filterResetBtn');
 
 function addCustomKeyword(raw) {
   const v = (raw || '').trim().toLowerCase();
@@ -916,8 +1252,8 @@ if (customAddBtn && customInput) {
 }
 if (customResetBtn) {
   customResetBtn.addEventListener('click', () => {
-    const v = document.getElementById('filterVaact');
-    const i = document.getElementById('filterIncomplete');
+    const v = $('filterVaact');
+    const i = $('filterIncomplete');
     if (v) v.checked = false;
     if (i) i.checked = false;
     customKeywords = [];
@@ -932,8 +1268,8 @@ if (customResetBtn) {
 // ============================================================================
 // RECHERCHE
 // ============================================================================
-const searchInput = document.getElementById('searchInput');
-const searchClear = document.getElementById('searchClear');
+const searchInput = $('searchInput');
+const searchClear = $('searchClear');
 
 function updateSearchIndicator() {
   if (!searchInput) return;
@@ -977,8 +1313,8 @@ function markDirty() {
   if (dirty) setSaveStatus('Non enregistré…', false);
   else setSaveStatus('');
 }
-document.getElementById('editNameFr').addEventListener('input', markDirty);
-document.getElementById('editDescFr').addEventListener('input', markDirty);
+$('editNameFr').addEventListener('input', markDirty);
+$('editDescFr').addEventListener('input', markDirty);
 
 // ============================================================================
 // RACCOURCIS CLAVIER
@@ -989,7 +1325,8 @@ document.addEventListener('keydown', (e) => {
     saveCurrentCard();
     return;
   }
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (e.key === 'ArrowLeft') goPrev();
   else if (e.key === 'ArrowRight') goNext();
 });
@@ -1025,9 +1362,9 @@ const THEME_KEY = 'cdb-translator-theme';
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   const icon = t === 'dark' ? '☀️' : '🌙';
-  const btn = document.getElementById('themeToggle');
+  const btn = $('themeToggle');
   if (btn) btn.textContent = icon;
-  const btnW = document.getElementById('themeToggleWelcome');
+  const btnW = $('themeToggleWelcome');
   if (btnW) btnW.textContent = icon;
 }
 
@@ -1036,13 +1373,13 @@ function toggleTheme() {
   const next = cur === 'dark' ? 'light' : 'dark';
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
-  const card = getFilteredCards()[currentIndex];
+  const card = currentCard();
   if (card) renderTags(card.desc_fr);
 }
 
-document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+$('themeToggle').addEventListener('click', toggleTheme);
 
-const themeToggleWelcome = document.getElementById('themeToggleWelcome');
+const themeToggleWelcome = $('themeToggleWelcome');
 if (themeToggleWelcome) {
   themeToggleWelcome.addEventListener('click', toggleTheme);
 }
@@ -1052,12 +1389,12 @@ applyTheme(localStorage.getItem(THEME_KEY) || 'light');
 // ============================================================================
 // INIT
 // ============================================================================
-document.getElementById('pickSourceBtn').addEventListener('click', () => pickCdb('source'));
-document.getElementById('pickTradBtn').addEventListener('click', () => pickCdb('trad'));
-document.getElementById('startBtn').addEventListener('click', startApp);
+$('pickSourceBtn').addEventListener('click', () => pickCdb('source'));
+$('pickTradBtn').addEventListener('click', () => pickCdb('trad'));
+$('startBtn').addEventListener('click', startApp);
 
 if (!supportsFS) {
-  const btn = document.getElementById('startBtn');
+  const btn = $('startBtn');
   if (btn) {
     btn.disabled = true;
     btn.textContent = '❌ Navigateur non compatible';
